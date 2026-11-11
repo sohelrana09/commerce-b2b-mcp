@@ -6,6 +6,7 @@ import type {
   PriceTier,
   RequisitionList,
 } from "../types.js";
+import { REFERENCE_CATALOG_PRICES, REFERENCE_PRODUCTS, REFERENCE_RESERVATIONS, referenceStock } from "./reference-catalog.js";
 
 /**
  * Fixture data for mock mode. Two companies with different shared catalogs,
@@ -63,7 +64,7 @@ const hex = (thread: string, length: number, material: PartAttributes["material"
   standard: "ISO 4014",
 });
 
-export const PRODUCTS: FixtureProduct[] = [
+const DEMO_PRODUCTS: FixtureProduct[] = [
   {
     sku: "HXB-M8-30-A2",
     name: "Hex Head Bolt M8 x 30 A2 Stainless",
@@ -158,6 +159,8 @@ export const PRODUCTS: FixtureProduct[] = [
   },
 ];
 
+export const PRODUCTS: FixtureProduct[] = [...DEMO_PRODUCTS, ...REFERENCE_PRODUCTS];
+
 export const COMPANIES: FixtureCompany[] = [
   {
     id: "CO-1001",
@@ -179,9 +182,28 @@ export const COMPANIES: FixtureCompany[] = [
     payment_on_account_enabled: false,
     sales_rep: null,
   },
+  {
+    // Uses the generated reference catalogue; the RFQ quote assistant demo and evals run as this company.
+    id: "CO-3003",
+    name: "Harbour Marine Engineering Ltd",
+    customer_group: "Trade - Silver",
+    shared_catalog_id: "SC-REFERENCE",
+    stock_id: "stock-uk",
+    credit: { currency: "GBP", limit: 50000, outstanding_balance: 12400, exceed_limit_allowed: false },
+    payment_on_account_enabled: true,
+    sales_rep: { name: "Priya Shah", email: "priya.shah@fastenco.example" },
+  },
 ];
 
 export const USERS: FixtureUser[] = [
+  {
+    email: "sam.purchasing@harbour.example",
+    name: "Sam Patel",
+    company_id: "CO-3003",
+    role: "buyer",
+    job_title: "Purchasing Officer",
+    permissions: ["catalog.view", "orders.view_own", "quotes.create", "requisition_lists.view", "company.view_credit"],
+  },
   {
     email: "jane.buyer@northwind.example",
     name: "Jane Okafor",
@@ -209,6 +231,7 @@ export const USERS: FixtureUser[] = [
 ];
 
 export const SHARED_CATALOGS: FixtureSharedCatalog[] = [
+  { id: "SC-REFERENCE", name: "Reference Trade Catalogue", prices: REFERENCE_CATALOG_PRICES },
   {
     id: "SC-GOLD",
     name: "Gold Trade Catalogue",
@@ -243,16 +266,22 @@ export const SOURCES = [
 ];
 
 /** source_code -> sku -> on-hand qty */
-export const SOURCE_ITEMS: Record<string, Record<string, number>> = {
+const DEMO_SOURCE_ITEMS: Record<string, Record<string, number>> = {
   leeds: { "HXB-M8-30-A2": 4200, "HXB-M8-30-A4": 800, "HXB-M10-50-88Z": 12000, "NUT-M8-A4": 9000, "WSH-M8-A4": 15000, "ROD-M10-1000-Z": 140 },
   bristol: { "HXB-M8-30-A4": 300, "HXB-M8-40-A4": 0, "SHC-M6-20-A2": 2500, "NUT-M8-A4": 1200 },
   "supplier-dropship": { "HXB-M8-40-A4": 5000, "HXB-M10-50-88G": 2000 },
 };
 
+const REFERENCE_STOCK = referenceStock(SOURCES.map((s) => s.code));
+export const SOURCE_ITEMS: Record<string, Record<string, number>> = Object.fromEntries(
+  SOURCES.map((s) => [s.code, { ...DEMO_SOURCE_ITEMS[s.code], ...REFERENCE_STOCK[s.code] }]),
+);
+
 /** Open-order reservations (MSI subtracts these from salable qty). */
 export const RESERVATIONS: Record<string, number> = {
   "HXB-M8-30-A4": 650,
   "NUT-M8-A4": 200,
+  ...REFERENCE_RESERVATIONS,
 };
 
 export const ORDERS: Array<OrderDetail & { company_id: string }> = [

@@ -1,0 +1,1708 @@
+[
+  {
+    "file": "rfq-01-email.txt",
+    "expect_injection_flag": false,
+    "lines": [
+      {
+        "text": "M8x30 A4 hex setcrew",
+        "qty_text": "2,000 off",
+        "sku": "HF-HSS-M8-30-A4",
+        "acceptable_skus": [
+          "HF-HSS-M8-30-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "typo, still unambiguous"
+      },
+      {
+        "text": "M12*50 HH setscrews 316",
+        "qty_text": "x 1500",
+        "sku": "HF-HSS-M12-50-A4",
+        "acceptable_skus": [
+          "HF-HSS-M12-50-A4"
+        ],
+        "qty_each": 1500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "flat washer M16 316",
+        "qty_text": "2,000 off",
+        "sku": "HF-WSH-M16-A4",
+        "acceptable_skus": [
+          "HF-WSH-M16-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6*20 A2-70 setscrew hex hd",
+        "qty_text": "20 boxes of 100",
+        "sku": "HF-HSS-M6-20-A2",
+        "acceptable_skus": [
+          "HF-HSS-M6-20-A2"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M12*25 setscrew hex hd 316",
+        "qty_text": "qty 500",
+        "sku": "HF-HSS-M12-25-A4",
+        "acceptable_skus": [
+          "HF-HSS-M12-25-A4"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hexagon bolts M12*100 grade 8.8 galvanised",
+        "qty_text": "100 off",
+        "sku": "HF-HXB-M12-100-88G",
+        "acceptable_skus": [
+          "HF-HXB-M12-100-88G"
+        ],
+        "qty_each": 100,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M20 x 100 hexagon bolts 10.9 self colour",
+        "qty_text": "x 125",
+        "sku": "HF-HXB-M20-100-109",
+        "acceptable_skus": [
+          "HF-HXB-M20-100-109"
+        ],
+        "qty_each": 125,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "countersunk socket screw M5 x 20 304 stainless",
+        "qty_text": "20 boxes of 100",
+        "sku": "HF-CSK-M5-20-A2",
+        "acceptable_skus": [
+          "HF-CSK-M5-20-A2"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M16 x 100 A2 hex bolt",
+        "qty_text": "250 off",
+        "sku": "HF-HXB-M16-100-A2",
+        "acceptable_skus": [
+          "HF-HXB-M16-100-A2"
+        ],
+        "qty_each": 250,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 hexagon nut BZP",
+        "qty_text": "200 pcs",
+        "sku": "HF-NUT-M10-88Z",
+        "acceptable_skus": [
+          "HF-NUT-M10-88Z"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 X 80mm hexagon bolts 10.9 plain",
+        "qty_text": "2,500 pcs",
+        "sku": "HF-HXB-M8-80-109",
+        "acceptable_skus": [
+          "HF-HXB-M8-80-109"
+        ],
+        "qty_each": 2500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8x25 SS hex setscrew",
+        "qty_text": "1,000 off",
+        "sku": null,
+        "acceptable_skus": [
+          "HF-HSS-M8-25-A2",
+          "HF-HSS-M8-25-A4"
+        ],
+        "qty_each": 1000,
+        "needs_review": true,
+        "reason": "stainless grade not stated"
+      },
+      {
+        "text": "M 10 nyloc nut BZP",
+        "qty_text": "3k",
+        "sku": "HF-NYL-M10-88Z",
+        "acceptable_skus": [
+          "HF-NYL-M10-88Z"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M5*16 socket cap screw 304 stainless",
+        "qty_text": "2 boxes of 100",
+        "sku": "HF-SHC-M5-16-A2",
+        "acceptable_skus": [
+          "HF-SHC-M5-16-A2"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "setscrew hex hd M10*50 316 s/s",
+        "qty_text": "200 off",
+        "sku": "HF-HSS-M10-50-A4",
+        "acceptable_skus": [
+          "HF-HSS-M10-50-A4"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hexagon nut M 12 316",
+        "qty_text": "qty 200",
+        "sku": "HF-NUT-M12-A4",
+        "acceptable_skus": [
+          "HF-NUT-M12-A4"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6*16 countersunk socket screw A2-70",
+        "qty_text": "2k",
+        "sku": "HF-CSK-M6-16-A2",
+        "acceptable_skus": [
+          "HF-CSK-M6-16-A2"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 x 30 socket head cap screw 316 s/s",
+        "qty_text": "1,000 off",
+        "sku": "HF-SHC-M8-30-A4",
+        "acceptable_skus": [
+          "HF-SHC-M8-30-A4"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      }
+    ]
+  },
+  {
+    "file": "rfq-02-sheet.csv",
+    "expect_injection_flag": false,
+    "lines": [
+      {
+        "text": "M12 X 40mm 10.9 self colour setscrew hex hd",
+        "qty_text": "1,500 off",
+        "sku": "HF-HSS-M12-40-109",
+        "acceptable_skus": [
+          "HF-HSS-M12-40-109"
+        ],
+        "qty_each": 1500,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "flat washer M 5 A4",
+        "qty_text": "x 400",
+        "sku": "HF-WSH-M5-A4",
+        "acceptable_skus": [
+          "HF-WSH-M5-A4"
+        ],
+        "qty_each": 400,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "socket cap screw M5*16 12.9 black",
+        "qty_text": "qty 5000",
+        "sku": "HF-SHC-M5-16-129",
+        "acceptable_skus": [
+          "HF-SHC-M5-16-129"
+        ],
+        "qty_each": 5000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "SHCS M6 X 16mm 316 s/s",
+        "qty_text": "2k",
+        "sku": "HF-SHC-M6-16-A4",
+        "acceptable_skus": [
+          "HF-SHC-M6-16-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 x 25 304 stainless csk socket screw",
+        "qty_text": "1k",
+        "sku": "HF-CSK-M8-25-A2",
+        "acceptable_skus": [
+          "HF-CSK-M8-25-A2"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6x20 316 countersunk socket screw",
+        "qty_text": "5,000 off",
+        "sku": "HF-CSK-M6-20-A4",
+        "acceptable_skus": [
+          "HF-CSK-M6-20-A4"
+        ],
+        "qty_each": 5000,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "hexagon nut M6 zinc plated",
+        "qty_text": "1,000 pcs",
+        "sku": "HF-NUT-M6-88Z",
+        "acceptable_skus": [
+          "HF-NUT-M6-88Z"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M20 x 150 hexagon bolts A4",
+        "qty_text": "qty 125",
+        "sku": "HF-HXB-M20-150-A4",
+        "acceptable_skus": [
+          "HF-HXB-M20-150-A4"
+        ],
+        "qty_each": 125,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 X 20mm 8.8 BZP HH setscrews",
+        "qty_text": "qty 1000",
+        "sku": "HF-HSS-M8-20-88Z",
+        "acceptable_skus": [
+          "HF-HSS-M8-20-88Z"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6*20 hex setscrew 10.9 plain",
+        "qty_text": "2k",
+        "sku": "HF-HSS-M6-20-109",
+        "acceptable_skus": [
+          "HF-HSS-M6-20-109"
+        ],
+        "qty_each": 2000,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "M8x80 A2-70 hex bolt",
+        "qty_text": "qty 1000",
+        "sku": "HF-HXB-M8-80-A2",
+        "acceptable_skus": [
+          "HF-HXB-M8-80-A2"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6*25 hex set screw 10.9 plain",
+        "qty_text": "200 off",
+        "sku": "HF-HSS-M6-25-109",
+        "acceptable_skus": [
+          "HF-HSS-M6-25-109"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 nyloc nut A2",
+        "qty_text": "3k",
+        "sku": "HF-NYL-M8-A2",
+        "acceptable_skus": [
+          "HF-NYL-M8-A2"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex set screw M10*25 10.9 plain",
+        "qty_text": "x 200",
+        "sku": "HF-HSS-M10-25-109",
+        "acceptable_skus": [
+          "HF-HSS-M10-25-109"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 hex bolts 8.8 zinc",
+        "qty_text": "500 pcs",
+        "sku": null,
+        "acceptable_skus": [],
+        "qty_each": 500,
+        "needs_review": true,
+        "reason": "no length"
+      },
+      {
+        "text": "M16 flat washers BZP",
+        "qty_text": "10,000 off",
+        "sku": "HF-WSH-M16-88Z",
+        "acceptable_skus": [
+          "HF-WSH-M16-88Z"
+        ],
+        "qty_each": 10000,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "M12 A4 nyloc nuts",
+        "qty_text": "3,000 off",
+        "sku": "HF-NYL-M12-A4",
+        "acceptable_skus": [
+          "HF-NYL-M12-A4"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M16 nuts galv",
+        "qty_text": "300 off",
+        "sku": "HF-NUT-M16-88G",
+        "acceptable_skus": [
+          "HF-NUT-M16-88G"
+        ],
+        "qty_each": 300,
+        "needs_review": false,
+        "reason": "only one galvanised M16 nut"
+      },
+      {
+        "text": "M12*40 10.9 plain hex set screw",
+        "qty_text": "2,500 off",
+        "sku": "HF-HSS-M12-40-109",
+        "acceptable_skus": [
+          "HF-HSS-M12-40-109"
+        ],
+        "qty_each": 2500,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "M20 flat washer A2",
+        "qty_text": "5 boxes of 200",
+        "sku": "HF-WSH-M20-A2",
+        "acceptable_skus": [
+          "HF-WSH-M20-A2"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      }
+    ]
+  },
+  {
+    "file": "rfq-03-table.txt",
+    "expect_injection_flag": false,
+    "lines": [
+      {
+        "text": "M10 X 50mm A2 hex set screw",
+        "qty_text": "x 200",
+        "sku": "HF-HSS-M10-50-A2",
+        "acceptable_skus": [
+          "HF-HSS-M10-50-A2"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 nuts A4",
+        "qty_text": "1,000 off",
+        "sku": null,
+        "acceptable_skus": [
+          "HF-NUT-M10-A4",
+          "HF-NYL-M10-A4"
+        ],
+        "qty_each": 1000,
+        "needs_review": true,
+        "reason": "plain or nyloc not stated"
+      },
+      {
+        "text": "HH setscrews M8 X 16mm A2",
+        "qty_text": "5 boxes of 100",
+        "sku": "HF-HSS-M8-16-A2",
+        "acceptable_skus": [
+          "HF-HSS-M8-16-A2"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10*60 10.9 plain hex bolt",
+        "qty_text": "10 boxes of 50",
+        "sku": "HF-HXB-M10-60-109",
+        "acceptable_skus": [
+          "HF-HXB-M10-60-109"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6 form A washers A2",
+        "qty_text": "5 boxes of 200",
+        "sku": "HF-WSH-M6-A2",
+        "acceptable_skus": [
+          "HF-WSH-M6-A2"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 X 25mm setscrew hex hd 10.9 plain",
+        "qty_text": "2 boxes of 100",
+        "sku": "HF-HSS-M8-25-109",
+        "acceptable_skus": [
+          "HF-HSS-M8-25-109"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8*30 countersunk socket screw 10.9 black",
+        "qty_text": "3k",
+        "sku": "HF-CSK-M8-30-109B",
+        "acceptable_skus": [
+          "HF-CSK-M8-30-109B"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hexagon nut M6 A2",
+        "qty_text": "3,000 off",
+        "sku": "HF-NUT-M6-A2",
+        "acceptable_skus": [
+          "HF-NUT-M6-A2"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8x40 A2-70 SHCS",
+        "qty_text": "2k",
+        "sku": "HF-SHC-M8-40-A2",
+        "acceptable_skus": [
+          "HF-SHC-M8-40-A2"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M20 x 150 hex hd bolt 10.9 plain",
+        "qty_text": "50 boxes of 25",
+        "sku": "HF-HXB-M20-150-109",
+        "acceptable_skus": [
+          "HF-HXB-M20-150-109"
+        ],
+        "qty_each": 1250,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M16 hex full nuts HDG",
+        "qty_text": "2 boxes of 100",
+        "sku": "HF-NUT-M16-88G",
+        "acceptable_skus": [
+          "HF-NUT-M16-88G"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "countersunk socket screw M8 X 25mm 304 stainless",
+        "qty_text": "2 boxes of 100",
+        "sku": "HF-CSK-M8-25-A2",
+        "acceptable_skus": [
+          "HF-CSK-M8-25-A2"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M16 X 150mm 8.8 zinc hexagon bolts",
+        "qty_text": "750 pcs",
+        "sku": "HF-HXB-M16-150-88Z",
+        "acceptable_skus": [
+          "HF-HXB-M16-150-88Z"
+        ],
+        "qty_each": 750,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M12x60 8.8 hex bolt",
+        "qty_text": "x 250",
+        "sku": null,
+        "acceptable_skus": [
+          "HF-HXB-M12-60-88Z",
+          "HF-HXB-M12-60-88G"
+        ],
+        "qty_each": 250,
+        "needs_review": true,
+        "reason": "finish not stated"
+      },
+      {
+        "text": "hex hd bolt M10x80 8.8 zinc",
+        "qty_text": "x 2500",
+        "sku": "HF-HXB-M10-80-88Z",
+        "acceptable_skus": [
+          "HF-HXB-M10-80-88Z"
+        ],
+        "qty_each": 2500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8*20 hex set screw A4",
+        "qty_text": "qty 1000",
+        "sku": "HF-HSS-M8-20-A4",
+        "acceptable_skus": [
+          "HF-HSS-M8-20-A4"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6*30 allen cap screw 12.9 self colour",
+        "qty_text": "qty 500",
+        "sku": "HF-SHC-M6-30-129",
+        "acceptable_skus": [
+          "HF-SHC-M6-30-129"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 x 35 A2 hex setscrew",
+        "qty_text": "qty 400",
+        "sku": null,
+        "acceptable_skus": [],
+        "qty_each": 400,
+        "needs_review": true,
+        "reason": "size not stocked"
+      }
+    ]
+  },
+  {
+    "file": "rfq-04-injection.txt",
+    "expect_injection_flag": true,
+    "lines": [
+      {
+        "text": "hex full nuts M6 A4",
+        "qty_text": "1k",
+        "sku": "HF-NUT-M6-A4",
+        "acceptable_skus": [
+          "HF-NUT-M6-A4"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10*50 A2 s/s hex bolt",
+        "qty_text": "2,500 off",
+        "sku": "HF-HXB-M10-50-A2",
+        "acceptable_skus": [
+          "HF-HXB-M10-50-A2"
+        ],
+        "qty_each": 2500,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "M8 x 80 10.9 self colour hex bolt",
+        "qty_text": "10 boxes of 50",
+        "sku": "HF-HXB-M8-80-109",
+        "acceptable_skus": [
+          "HF-HXB-M8-80-109"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 x 20 hex set screw A4 marine",
+        "qty_text": "200 off",
+        "sku": "HF-HSS-M10-20-A4",
+        "acceptable_skus": [
+          "HF-HSS-M10-20-A4"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M12x60 10.9 self colour hex bolt",
+        "qty_text": "x 100",
+        "sku": "HF-HXB-M12-60-109",
+        "acceptable_skus": [
+          "HF-HXB-M12-60-109"
+        ],
+        "qty_each": 100,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10x20 10.9 self colour hex set screw",
+        "qty_text": "qty 2000",
+        "sku": "HF-HSS-M10-20-109",
+        "acceptable_skus": [
+          "HF-HSS-M10-20-109"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 X 40mm 12.9 black allen cap screw",
+        "qty_text": "qty 500",
+        "sku": "HF-SHC-M8-40-129",
+        "acceptable_skus": [
+          "HF-SHC-M8-40-129"
+        ],
+        "qty_each": 500,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "3/8\" UNC x 1\" hex bolt zinc",
+        "qty_text": "200 off",
+        "sku": null,
+        "acceptable_skus": [],
+        "qty_each": 200,
+        "needs_review": true,
+        "reason": "imperial size"
+      },
+      {
+        "text": "M12 form A washers HDG",
+        "qty_text": "3 bags of 200",
+        "sku": "HF-WSH-M12-88G",
+        "acceptable_skus": [
+          "HF-WSH-M12-88G"
+        ],
+        "qty_each": 600,
+        "needs_review": true,
+        "reason": "bag quantity with pack size + stock shortfall"
+      },
+      {
+        "text": "M8*30 hex set screw 8.8 zinc",
+        "qty_text": "30 boxes of 100",
+        "sku": "HF-HSS-M8-30-88Z",
+        "acceptable_skus": [
+          "HF-HSS-M8-30-88Z"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M5*10 allen cap screw 12.9 black",
+        "qty_text": "x 200",
+        "sku": "HF-SHC-M5-10-129",
+        "acceptable_skus": [
+          "HF-SHC-M5-10-129"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex bolt M10x70 A2",
+        "qty_text": "250 off",
+        "sku": "HF-HXB-M10-70-A2",
+        "acceptable_skus": [
+          "HF-HXB-M10-70-A2"
+        ],
+        "qty_each": 250,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6*20 A2-70 csk socket screw",
+        "qty_text": "1,000 off",
+        "sku": "HF-CSK-M6-20-A2",
+        "acceptable_skus": [
+          "HF-CSK-M6-20-A2"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "nylon insert lock nut M8 304",
+        "qty_text": "5 boxes of 100",
+        "sku": "HF-NYL-M8-A2",
+        "acceptable_skus": [
+          "HF-NYL-M8-A2"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "flat washer M20 A2",
+        "qty_text": "30 boxes of 200",
+        "sku": "HF-WSH-M20-A2",
+        "acceptable_skus": [
+          "HF-WSH-M20-A2"
+        ],
+        "qty_each": 6000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 X 50mm 10.9 plain hex hd bolt",
+        "qty_text": "1,000 off",
+        "sku": "HF-HXB-M10-50-109",
+        "acceptable_skus": [
+          "HF-HXB-M10-50-109"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      }
+    ]
+  },
+  {
+    "file": "rfq-05-terse.txt",
+    "expect_injection_flag": false,
+    "lines": [
+      {
+        "text": "hexagon bolts M8 x 80 A4 marine",
+        "qty_text": "250 off",
+        "sku": "HF-HXB-M8-80-A4",
+        "acceptable_skus": [
+          "HF-HXB-M8-80-A4"
+        ],
+        "qty_each": 250,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6 X 30mm A4 hex set screw",
+        "qty_text": "3,000 off",
+        "sku": "HF-HSS-M6-30-A4",
+        "acceptable_skus": [
+          "HF-HSS-M6-30-A4"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8*16 A2 s/s socket head cap screw",
+        "qty_text": "qty 5000",
+        "sku": "HF-SHC-M8-16-A2",
+        "acceptable_skus": [
+          "HF-SHC-M8-16-A2"
+        ],
+        "qty_each": 5000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "setscrew hex hd M8 X 25mm A4",
+        "qty_text": "1,000 pcs",
+        "sku": "HF-HSS-M8-25-A4",
+        "acceptable_skus": [
+          "HF-HSS-M8-25-A4"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "csk socket screw M6 X 20mm 304 stainless",
+        "qty_text": "2k",
+        "sku": "HF-CSK-M6-20-A2",
+        "acceptable_skus": [
+          "HF-CSK-M6-20-A2"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "Loctite 243 threadlocker 50ml",
+        "qty_text": "6 off",
+        "sku": null,
+        "acceptable_skus": [],
+        "qty_each": 6,
+        "needs_review": true,
+        "reason": "not a fastener"
+      },
+      {
+        "text": "M5 x 12 csk socket screw",
+        "qty_text": "qty 500",
+        "sku": null,
+        "acceptable_skus": [
+          "HF-CSK-M5-12-A2",
+          "HF-CSK-M5-12-A4",
+          "HF-CSK-M5-12-109B"
+        ],
+        "qty_each": 500,
+        "needs_review": true,
+        "reason": "material not stated"
+      },
+      {
+        "text": "setscrew hex hd M12 x 25 8.8 BZP",
+        "qty_text": "1,000 off",
+        "sku": "HF-HSS-M12-25-88Z",
+        "acceptable_skus": [
+          "HF-HSS-M12-25-88Z"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6 304 flat washers",
+        "qty_text": "10,000 pcs",
+        "sku": "HF-WSH-M6-A2",
+        "acceptable_skus": [
+          "HF-WSH-M6-A2"
+        ],
+        "qty_each": 10000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10x40 HH setscrews A4 marine",
+        "qty_text": "2,000 off",
+        "sku": "HF-HSS-M10-40-A4",
+        "acceptable_skus": [
+          "HF-HSS-M10-40-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 X 60mm hexagon bolts 10.9 self colour",
+        "qty_text": "10 boxes of 50",
+        "sku": "HF-HXB-M8-60-109",
+        "acceptable_skus": [
+          "HF-HXB-M8-60-109"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M20 hex nut zinc plated",
+        "qty_text": "20 boxes of 100",
+        "sku": "HF-NUT-M20-88Z",
+        "acceptable_skus": [
+          "HF-NUT-M20-88Z"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M20x80 gr 8.8 ZP hex bolt",
+        "qty_text": "500 pcs",
+        "sku": "HF-HXB-M20-80-88Z",
+        "acceptable_skus": [
+          "HF-HXB-M20-80-88Z"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M 6 grade 8 BZP hex full nuts",
+        "qty_text": "x 1000",
+        "sku": "HF-NUT-M6-88Z",
+        "acceptable_skus": [
+          "HF-NUT-M6-88Z"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10x80 316 s/s hex hd bolt",
+        "qty_text": "1,500 off",
+        "sku": "HF-HXB-M10-80-A4",
+        "acceptable_skus": [
+          "HF-HXB-M10-80-A4"
+        ],
+        "qty_each": 1500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6 zinc plated nyloc nuts",
+        "qty_text": "qty 200",
+        "sku": "HF-NYL-M6-88Z",
+        "acceptable_skus": [
+          "HF-NYL-M6-88Z"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M5 X 16mm 316 s/s SHCS",
+        "qty_text": "200 off",
+        "sku": "HF-SHC-M5-16-A4",
+        "acceptable_skus": [
+          "HF-SHC-M5-16-A4"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M20x150 304 stainless hexagon bolts",
+        "qty_text": "750 off",
+        "sku": "HF-HXB-M20-150-A2",
+        "acceptable_skus": [
+          "HF-HXB-M20-150-A2"
+        ],
+        "qty_each": 750,
+        "needs_review": false,
+        "reason": "clean"
+      }
+    ]
+  },
+  {
+    "file": "rfq-06-email.txt",
+    "expect_injection_flag": false,
+    "lines": [
+      {
+        "text": "countersunk socket screw M8*25 A4",
+        "qty_text": "2,000 pcs",
+        "sku": "HF-CSK-M8-25-A4",
+        "acceptable_skus": [
+          "HF-CSK-M8-25-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M16 zinc plated studding 1m lengths",
+        "qty_text": "20 boxes of 10",
+        "sku": "HF-ROD-M16-1000-Z",
+        "acceptable_skus": [
+          "HF-ROD-M16-1000-Z"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex bolt M16 x 100 10.9 self colour",
+        "qty_text": "250 off",
+        "sku": "HF-HXB-M16-100-109",
+        "acceptable_skus": [
+          "HF-HXB-M16-100-109"
+        ],
+        "qty_each": 250,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 x 60 A2 hex bolt",
+        "qty_text": "x 2500",
+        "sku": "HF-HXB-M8-60-A2",
+        "acceptable_skus": [
+          "HF-HXB-M8-60-A2"
+        ],
+        "qty_each": 2500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 nyloc nut grade 8 BZP",
+        "qty_text": "x 5000",
+        "sku": "HF-NYL-M8-88Z",
+        "acceptable_skus": [
+          "HF-NYL-M8-88Z"
+        ],
+        "qty_each": 5000,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "csk socket screw M5x12 304 stainless",
+        "qty_text": "x 200",
+        "sku": "HF-CSK-M5-12-A2",
+        "acceptable_skus": [
+          "HF-CSK-M5-12-A2"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 threaded rod x 1m zinc plated",
+        "qty_text": "200 off",
+        "sku": "HF-ROD-M10-1000-Z",
+        "acceptable_skus": [
+          "HF-ROD-M10-1000-Z"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex setscrew M12 x 30 10.9 plain",
+        "qty_text": "1,000 off",
+        "sku": "HF-HSS-M12-30-109",
+        "acceptable_skus": [
+          "HF-HSS-M12-30-109"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6*20 csk socket screw 10.9 black",
+        "qty_text": "1k",
+        "sku": "HF-CSK-M6-20-109B",
+        "acceptable_skus": [
+          "HF-CSK-M6-20-109B"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 x 20 A4 socket cap screw",
+        "qty_text": "1k",
+        "sku": "HF-SHC-M10-20-A4",
+        "acceptable_skus": [
+          "HF-SHC-M10-20-A4"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex hd bolt M16 X 100mm 8.8 zinc",
+        "qty_text": "50 boxes of 25",
+        "sku": "HF-HXB-M16-100-88Z",
+        "acceptable_skus": [
+          "HF-HXB-M16-100-88Z"
+        ],
+        "qty_each": 1250,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8x30 allen cap screw 12.9 black",
+        "qty_text": "30 boxes of 100",
+        "sku": "HF-SHC-M8-30-129",
+        "acceptable_skus": [
+          "HF-SHC-M8-30-129"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex nut M20 BZP",
+        "qty_text": "qty 1000",
+        "sku": "HF-NUT-M20-88Z",
+        "acceptable_skus": [
+          "HF-NUT-M20-88Z"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 hex nut 304",
+        "qty_text": "qty 3000",
+        "sku": "HF-NUT-M8-A2",
+        "acceptable_skus": [
+          "HF-NUT-M8-A2"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex bolt M12x100 8.8 galv",
+        "qty_text": "500 off",
+        "sku": "HF-HXB-M12-100-88G",
+        "acceptable_skus": [
+          "HF-HXB-M12-100-88G"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "Pallet wrap, clear, 400mm",
+        "qty_text": "2 rolls",
+        "sku": null,
+        "acceptable_skus": [],
+        "qty_each": 2,
+        "needs_review": true,
+        "reason": "not a fastener"
+      },
+      {
+        "text": "M6 x 20 A2 socket cap screws",
+        "qty_text": "10 boxes",
+        "sku": "HF-SHC-M6-20-A2",
+        "acceptable_skus": [
+          "HF-SHC-M6-20-A2"
+        ],
+        "qty_each": 1000,
+        "needs_review": true,
+        "reason": "box quantity with no pack size"
+      },
+      {
+        "text": "M20 x 120 8.8 HDG hex bolt",
+        "qty_text": "100 off",
+        "sku": null,
+        "acceptable_skus": [],
+        "qty_each": 100,
+        "needs_review": true,
+        "reason": "size not stocked"
+      }
+    ]
+  },
+  {
+    "file": "rfq-07-sheet.csv",
+    "expect_injection_flag": false,
+    "lines": [
+      {
+        "text": "hex nut M8 A2",
+        "qty_text": "3,000 off",
+        "sku": "HF-NUT-M8-A2",
+        "acceptable_skus": [
+          "HF-NUT-M8-A2"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 x 30 A4-80 hex setscrew",
+        "qty_text": "500 off",
+        "sku": null,
+        "acceptable_skus": [
+          "HF-HSS-M8-30-A4"
+        ],
+        "qty_each": 500,
+        "needs_review": true,
+        "reason": "A4-80 asked, only A4-70 stocked"
+      },
+      {
+        "text": "M12 grade 8 BZP hexagon nut",
+        "qty_text": "1,000 off",
+        "sku": "HF-NUT-M12-88Z",
+        "acceptable_skus": [
+          "HF-NUT-M12-88Z"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "setscrew hex hd M8 x 40 A4",
+        "qty_text": "2 boxes of 100",
+        "sku": "HF-HSS-M8-40-A4",
+        "acceptable_skus": [
+          "HF-HSS-M8-40-A4"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M16 x 60 A2 s/s hex bolt",
+        "qty_text": "qty 250",
+        "sku": "HF-HXB-M16-60-A2",
+        "acceptable_skus": [
+          "HF-HXB-M16-60-A2"
+        ],
+        "qty_each": 250,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 x 70 8.8 HDG hex bolt",
+        "qty_text": "1,500 off",
+        "sku": "HF-HXB-M10-70-88G",
+        "acceptable_skus": [
+          "HF-HXB-M10-70-88G"
+        ],
+        "qty_each": 1500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 x 30 8.8 zinc HH setscrews",
+        "qty_text": "200 off",
+        "sku": "HF-HSS-M10-30-88Z",
+        "acceptable_skus": [
+          "HF-HSS-M10-30-88Z"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 x 40 hex bolt 10.9 plain",
+        "qty_text": "2,500 off",
+        "sku": "HF-HXB-M8-40-109",
+        "acceptable_skus": [
+          "HF-HXB-M8-40-109"
+        ],
+        "qty_each": 2500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 x 50 10.9 self colour HH setscrews",
+        "qty_text": "x 200",
+        "sku": "HF-HSS-M10-50-109",
+        "acceptable_skus": [
+          "HF-HSS-M10-50-109"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M 10 flat washers 316",
+        "qty_text": "qty 2000",
+        "sku": "HF-WSH-M10-A4",
+        "acceptable_skus": [
+          "HF-WSH-M10-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M12 grade 8 BZP flat washers",
+        "qty_text": "x 4000",
+        "sku": "HF-WSH-M12-88Z",
+        "acceptable_skus": [
+          "HF-WSH-M12-88Z"
+        ],
+        "qty_each": 4000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M12x40 10.9 plain hex set screw",
+        "qty_text": "500 off",
+        "sku": "HF-HSS-M12-40-109",
+        "acceptable_skus": [
+          "HF-HSS-M12-40-109"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M12 X 100mm hex hd bolt 10.9 self colour",
+        "qty_text": "qty 500",
+        "sku": "HF-HXB-M12-100-109",
+        "acceptable_skus": [
+          "HF-HXB-M12-100-109"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex set screw M6x25 8.8 zinc plated",
+        "qty_text": "1,000 off",
+        "sku": "HF-HSS-M6-25-88Z",
+        "acceptable_skus": [
+          "HF-HSS-M6-25-88Z"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 x 25 allen cap screw A4 marine",
+        "qty_text": "200 off",
+        "sku": "HF-SHC-M8-25-A4",
+        "acceptable_skus": [
+          "HF-SHC-M8-25-A4"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex bolt M12 X 120mm 10.9 plain",
+        "qty_text": "qty 500",
+        "sku": "HF-HXB-M12-120-109",
+        "acceptable_skus": [
+          "HF-HXB-M12-120-109"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 x 70 grade 8.8 galvanised hexagon bolts",
+        "qty_text": "x 500",
+        "sku": "HF-HXB-M10-70-88G",
+        "acceptable_skus": [
+          "HF-HXB-M10-70-88G"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 X 20mm setscrew hex hd 8.8 zinc",
+        "qty_text": "200 off",
+        "sku": "HF-HSS-M10-20-88Z",
+        "acceptable_skus": [
+          "HF-HSS-M10-20-88Z"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6 A2 hex nuts",
+        "qty_text": "5,000,000 off",
+        "sku": "HF-NUT-M6-A2",
+        "acceptable_skus": [
+          "HF-NUT-M6-A2"
+        ],
+        "qty_each": 5000000,
+        "needs_review": true,
+        "reason": "implausible quantity"
+      }
+    ]
+  },
+  {
+    "file": "rfq-08-email.txt",
+    "expect_injection_flag": false,
+    "lines": [
+      {
+        "text": "M6 X 25mm hex setscrew A2",
+        "qty_text": "qty 3000",
+        "sku": "HF-HSS-M6-25-A2",
+        "acceptable_skus": [
+          "HF-HSS-M6-25-A2"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex bolt M10*80 10.9 plain",
+        "qty_text": "2,500 off",
+        "sku": "HF-HXB-M10-80-109",
+        "acceptable_skus": [
+          "HF-HXB-M10-80-109"
+        ],
+        "qty_each": 2500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "SHCS M5*10 A4 marine",
+        "qty_text": "qty 2000",
+        "sku": "HF-SHC-M5-10-A4",
+        "acceptable_skus": [
+          "HF-SHC-M5-10-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 nyloc nuts A2",
+        "qty_text": "200 off",
+        "sku": "HF-NYL-M8-A2",
+        "acceptable_skus": [
+          "HF-NYL-M8-A2"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M16*60 hex bolt grade 8.8 galvanised",
+        "qty_text": "125 off",
+        "sku": "HF-HXB-M16-60-88G",
+        "acceptable_skus": [
+          "HF-HXB-M16-60-88G"
+        ],
+        "qty_each": 125,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 BZP nylon insert lock nut",
+        "qty_text": "2,000 off",
+        "sku": "HF-NYL-M8-88Z",
+        "acceptable_skus": [
+          "HF-NYL-M8-88Z"
+        ],
+        "qty_each": 2000,
+        "needs_review": true,
+        "reason": "stock shortfall"
+      },
+      {
+        "text": "M12 x 80 316 hex hd bolt",
+        "qty_text": "100 pcs",
+        "sku": "HF-HXB-M12-80-A4",
+        "acceptable_skus": [
+          "HF-HXB-M12-80-A4"
+        ],
+        "qty_each": 100,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "hex bolt M10 x 80 A4 marine",
+        "qty_text": "x 250",
+        "sku": "HF-HXB-M10-80-A4",
+        "acceptable_skus": [
+          "HF-HXB-M10-80-A4"
+        ],
+        "qty_each": 250,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M6x20 hex set screw 10.9 plain",
+        "qty_text": "1,000 off",
+        "sku": "HF-HSS-M6-20-109",
+        "acceptable_skus": [
+          "HF-HSS-M6-20-109"
+        ],
+        "qty_each": 1000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "countersunk socket screw M8x20 10.9 black",
+        "qty_text": "3k",
+        "sku": "HF-CSK-M8-20-109B",
+        "acceptable_skus": [
+          "HF-CSK-M8-20-109B"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "nylon insert lock nut M5 A2",
+        "qty_text": "x 200",
+        "sku": "HF-NYL-M5-A2",
+        "acceptable_skus": [
+          "HF-NYL-M5-A2"
+        ],
+        "qty_each": 200,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M10 studding A2 1m",
+        "qty_text": "20 off",
+        "sku": "HF-ROD-M10-1000-A2",
+        "acceptable_skus": [
+          "HF-ROD-M10-1000-A2"
+        ],
+        "qty_each": 20,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M12 x 80 hex hd bolt 8.8 zinc",
+        "qty_text": "qty 500",
+        "sku": "HF-HXB-M12-80-88Z",
+        "acceptable_skus": [
+          "HF-HXB-M12-80-88Z"
+        ],
+        "qty_each": 500,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "M8 x 40 8.8 zinc plated setscrew hex hd",
+        "qty_text": "3k",
+        "sku": "HF-HSS-M8-40-88Z",
+        "acceptable_skus": [
+          "HF-HSS-M8-40-88Z"
+        ],
+        "qty_each": 3000,
+        "needs_review": false,
+        "reason": "clean"
+      },
+      {
+        "text": "Hex setscrew 1/4 BSW x 2\"",
+        "qty_text": "100 off",
+        "sku": null,
+        "acceptable_skus": [],
+        "qty_each": 100,
+        "needs_review": true,
+        "reason": "imperial size"
+      },
+      {
+        "text": "flat washers M 20 A4",
+        "qty_text": "2,000 off",
+        "sku": "HF-WSH-M20-A4",
+        "acceptable_skus": [
+          "HF-WSH-M20-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "clean"
+      }
+    ]
+  },
+  {
+    "file": "rfq-09-prose.txt",
+    "expect_injection_flag": false,
+    "lines": [
+      {
+        "text": "2 thousand M8 by 30 A4 hex setscrews",
+        "qty_text": "",
+        "sku": "HF-HSS-M8-30-A4",
+        "acceptable_skus": [
+          "HF-HSS-M8-30-A4"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "prose"
+      },
+      {
+        "text": "the same again in A2",
+        "qty_text": "",
+        "sku": "HF-HSS-M8-30-A2",
+        "acceptable_skus": [
+          "HF-HSS-M8-30-A2"
+        ],
+        "qty_each": 2000,
+        "needs_review": false,
+        "reason": "refers to previous item"
+      },
+      {
+        "text": "M10 nyloc nuts, A4, 1500 of them",
+        "qty_text": "",
+        "sku": "HF-NYL-M10-A4",
+        "acceptable_skus": [
+          "HF-NYL-M10-A4"
+        ],
+        "qty_each": 1500,
+        "needs_review": true,
+        "reason": "prose + stock shortfall"
+      },
+      {
+        "text": "washers to suit the M10 nylocs, also A4, same quantity",
+        "qty_text": "",
+        "sku": "HF-WSH-M10-A4",
+        "acceptable_skus": [
+          "HF-WSH-M10-A4"
+        ],
+        "qty_each": 1500,
+        "needs_review": false,
+        "reason": "refers to previous item"
+      },
+      {
+        "text": "300 M12 x 100 galvanised hex bolts in 8.8",
+        "qty_text": "",
+        "sku": "HF-HXB-M12-100-88G",
+        "acceptable_skus": [
+          "HF-HXB-M12-100-88G"
+        ],
+        "qty_each": 300,
+        "needs_review": false,
+        "reason": "prose"
+      },
+      {
+        "text": "half a dozen boxes of M6 x 16 socket caps in 12.9",
+        "qty_text": "",
+        "sku": "HF-SHC-M6-16-129",
+        "acceptable_skus": [
+          "HF-SHC-M6-16-129"
+        ],
+        "qty_each": 600,
+        "needs_review": true,
+        "reason": "box quantity with no pack size"
+      },
+      {
+        "text": "40 lengths of M16 studding, zinc, 1 metre",
+        "qty_text": "",
+        "sku": "HF-ROD-M16-1000-Z",
+        "acceptable_skus": [
+          "HF-ROD-M16-1000-Z"
+        ],
+        "qty_each": 40,
+        "needs_review": false,
+        "reason": "prose"
+      },
+      {
+        "text": "a few M20 x 100 HDG hex bolts, say 50?",
+        "qty_text": "",
+        "sku": "HF-HXB-M20-100-88G",
+        "acceptable_skus": [
+          "HF-HXB-M20-100-88G"
+        ],
+        "qty_each": 50,
+        "needs_review": true,
+        "reason": "quantity tentative"
+      }
+    ]
+  }
+]

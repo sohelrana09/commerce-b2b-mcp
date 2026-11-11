@@ -25,8 +25,9 @@ const FINISH_WORDS: Array<[RegExp, PartAttributes["finish"]]> = [
 ];
 
 const HEAD_WORDS: Array<[RegExp, NonNullable<PartAttributes["head"]>]> = [
-  [/\b(socket|cap|shcs|allen)\b/, "socket_cap"],
+  // Countersunk first: "csk socket screw" is a countersunk socket screw, not a socket cap.
   [/\b(csk|countersunk|countersink)\b/, "countersunk"],
+  [/\b(socket|cap|shcs|allen)\b/, "socket_cap"],
   [/\b(pan)\b/, "pan"],
   [/\b(hex|hexagon|hh|setscrew|set screw)\b/, "hex"],
 ];
@@ -60,8 +61,8 @@ export function parseFastenerText(raw: string): Parsed {
     if (len) out.length_mm = Number(len[1]);
   }
 
-  const grade = text.match(/\b(4\.6|8\.8|10\.9|12\.9)\b/);
-  if (grade) out.grade = grade[1];
+  const grade = text.match(/\b(4\.6|8\.8|10\.9|12\.9)\b/) ?? text.match(/\b(a[24]-(?:50|70|80))\b/);
+  if (grade) out.grade = grade[1]!.toUpperCase();
 
   const material = first(text, MATERIAL_WORDS);
   if (material === "stainless_any") out.stainless_any = true;
@@ -125,7 +126,9 @@ export function scorePart(attrs: PartAttributes, want: Parsed): MatchScore | nul
     const got = attrs.part_type;
     check("part_type", got === want.part_type || (got !== null && boltish.has(got) && boltish.has(want.part_type)));
   }
-  if (want.head !== undefined) check("head", attrs.head === want.head);
+  // Head type only distinguishes bolts and screws; "hex nut" says nothing a nut's attributes can mismatch.
+  const headless = attrs.head === null && (attrs.part_type === "nut" || attrs.part_type === "washer" || attrs.part_type === "threaded_rod");
+  if (want.head !== undefined && !headless) check("head", attrs.head === want.head);
   if (want.grade !== undefined) check("grade", attrs.grade === want.grade);
   if (want.finish !== undefined) check("finish", attrs.finish === want.finish);
 

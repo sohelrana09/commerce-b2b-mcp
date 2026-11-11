@@ -1,0 +1,29 @@
+From: purchasing@harbour.example
+Subject: RFQ HM-24-0163
+
+Hi Priya,
+
+Please quote the following for delivery to our Southampton yard:
+
+1. M6 X 25mm hex setscrew A2 - qty 3000
+2. hex bolt M10*80 10.9 plain - 2,500 off
+3. SHCS M5*10 A4 marine - qty 2000
+4. M8 nyloc nuts A2 - 200 off
+5. M16*60 hex bolt grade 8.8 galvanised - 125 off
+6. M8 BZP nylon insert lock nut - 2,000 off
+7. M12 x 80 316 hex hd bolt - 100 pcs
+8. hex bolt M10 x 80 A4 marine - x 250
+9. M6x20 hex set screw 10.9 plain - 1,000 off
+10. countersunk socket screw M8x20 10.9 black - 3k
+11. nylon insert lock nut M5 A2 - x 200
+12. M10 studding A2 1m - 20 off
+13. M12 x 80 hex hd bolt 8.8 zinc - qty 500
+14. M8 x 40 8.8 zinc plated setscrew hex hd - 3k
+15. Hex setscrew 1/4 BSW x 2" - 100 off
+16. flat washers M 20 A4 - 2,000 off
+
+
+We need 3.1 material certificates on all stainless lines. Delivery by end of the month if possible.
+
+Thanks,
+Sam

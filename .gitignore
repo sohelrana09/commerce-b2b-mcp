@@ -10,3 +10,8 @@ audit.jsonl
 # Local store setups and live checks (may name a client or hold credentials)
 .mcp.json
 scripts/
+
+# Quote assistant: run files, rep corrections and full eval dumps hold customer RFQ text
+*.run.json
+evals/corrections.jsonl
+evals/results/*.json
