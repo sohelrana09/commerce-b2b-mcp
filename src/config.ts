@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { AttributeKey, PaasOptions } from "./backend/paas/paas-backend.js";
+import type { AuditInputMode } from "./audit.js";
 import { ToolError } from "./errors.js";
 
 export const ALL_TOOLS = [
@@ -40,6 +41,8 @@ export interface Config {
   enabledTools: ReadonlySet<ToolName>;
   /** "stderr" or a file path for the JSONL audit log. */
   auditLog: string;
+  /** "full" or "shape" (free text in tool inputs is replaced by its length). */
+  auditInput: AuditInputMode;
   confirmSecret: Buffer;
   confirmTtlSeconds: number;
   maxPageSize: number;
@@ -168,6 +171,12 @@ function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfi
   };
 }
 
+function parseAuditInput(raw: string | undefined): AuditInputMode {
+  const v = raw ?? "full";
+  if (v !== "full" && v !== "shape") throw new Error(`COMMERCE_AUDIT_INPUT must be "full" or "shape", got "${v}"`);
+  return v;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const backend = (env.COMMERCE_BACKEND ?? "mock") as Config["backend"];
   if (backend !== "mock" && backend !== "paas") {
@@ -200,6 +209,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     callerEmail,
     enabledTools: resolveTools(parseList(env.COMMERCE_TOOLS_ENABLED), parseList(env.COMMERCE_TOOLS_DISABLED)),
     auditLog: env.COMMERCE_AUDIT_LOG ?? "stderr",
+    auditInput: parseAuditInput(env.COMMERCE_AUDIT_INPUT),
     confirmSecret: secret ? Buffer.from(secret, "utf8") : randomBytes(32),
     confirmTtlSeconds: Number(env.COMMERCE_CONFIRM_TTL_SECONDS ?? 600),
     maxPageSize: 20,

@@ -222,3 +222,20 @@ describe("draft_negotiable_quote", () => {
     expect(res.data.error.code).toBe("INVALID_INPUT");
   });
 });
+
+describe("audit input minimisation", () => {
+  it("keeps SKUs, quantities and attributes but replaces free text with its length in shape mode", async () => {
+    const { connect } = await import("./helpers.js");
+    const { call, audit } = await connect({ COMMERCE_AUDIT_INPUT: "shape" });
+    await call("search_parts", { query: "M8x30 hex bolts for Mr Smith's boat", filters: { thread: "M8" } });
+    const input = audit.entries.at(-1)!.input as Record<string, unknown>;
+    expect(input.query).toBe("[text, 35 chars]");
+    expect(input.filters).toEqual({ thread: "M8" });
+    expect(input.limit).toBe(5);
+  });
+
+  it("rejects an unknown mode", async () => {
+    const { loadConfig } = await import("../src/config.js");
+    expect(() => loadConfig({ COMMERCE_AUDIT_INPUT: "none" })).toThrow(/COMMERCE_AUDIT_INPUT/);
+  });
+});

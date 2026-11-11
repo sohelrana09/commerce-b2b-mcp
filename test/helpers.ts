@@ -6,7 +6,7 @@ import { createServer } from "../src/server.js";
 
 export async function connect(env: Record<string, string> = {}) {
   const config = loadConfig({ COMMERCE_BACKEND: "mock", COMMERCE_CONFIRM_SECRET: "test-secret", ...env });
-  const audit = memoryAuditSink();
+  const audit = memoryAuditSink(config.auditInput);
   const { server } = createServer(config, { audit });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0.0.0" });

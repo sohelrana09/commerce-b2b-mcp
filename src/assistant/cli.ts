@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { connectStdio, type CommerceTools } from "./commerce.js";
-import { recordCorrection } from "./corrections.js";
+import { forgetCorrections, recordCorrection } from "./corrections.js";
 import { ClaudeExtractor, EFFORTS, type Effort } from "./extract/claude.js";
 import { HeuristicExtractor } from "./extract/heuristic.js";
 import { loadRfq } from "./extract/input.js";
@@ -17,6 +17,8 @@ const USAGE = `rfq-quote: turn a customer RFQ into a reviewed draft negotiable q
   rfq-quote review <rfq.txt|.eml|.csv|.pdf> [--extractor claude|heuristic] [--out review.md] [--save run.json]
   rfq-quote draft <run.json> [--include-flagged] [--name "Quote name"]
   rfq-quote correct <run.json> --line <ref> (--sku <SKU> | --none) [--qty <each>] [--note "..."] [--log corrections.jsonl]
+  rfq-quote forget (--document <name> | --older-than <days>) [--log corrections.jsonl]
+                   delete corrections for one RFQ (erasure request) or past a retention period
 
 The assistant talks to the store only through commerce-b2b-mcp, using the same COMMERCE_* settings.
 With no settings it runs against the built-in mock store as a Harbour Marine Engineering buyer.
@@ -128,8 +130,24 @@ async function correct(args: string[]) {
   console.log(`Recorded: line ${values.line} predicted ${rec.predicted_sku ?? "none"}, rep chose ${rec.expected_sku ?? "none"} -> ${values.log}`);
 }
 
+async function forget(args: string[]) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      document: { type: "string" },
+      "older-than": { type: "string" },
+      log: { type: "string", default: "evals/corrections.jsonl" },
+    },
+  });
+  const days = values["older-than"] === undefined ? undefined : Number(values["older-than"]);
+  if (days !== undefined && !(days >= 0)) throw new Error("--older-than must be a number of days.");
+  if (values.document === undefined && days === undefined) throw new Error(USAGE);
+  const n = forgetCorrections(values.log!, { ...(values.document !== undefined ? { document: values.document } : {}), ...(days !== undefined ? { olderThanDays: days } : {}) });
+  console.log(`Removed ${n} correction record${n === 1 ? "" : "s"} from ${values.log}. Delete the matching .run.json and review files separately.`);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
-const commands: Record<string, (a: string[]) => Promise<void>> = { review, draft, correct };
+const commands: Record<string, (a: string[]) => Promise<void>> = { review, draft, correct, forget };
 const run = cmd ? commands[cmd] : undefined;
 if (!run) {
   console.log(USAGE);

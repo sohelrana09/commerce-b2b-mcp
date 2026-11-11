@@ -21,6 +21,7 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 | 15 | [Model, effort and caching for intake](#15-model-effort-and-caching-for-intake) | Cost, latency |
 | 16 | [Evals: one number that must be zero](#16-evals-one-number-that-must-be-zero) | Evaluation |
 | 17 | [Fix matching with catalogue data, not prompts](#17-fix-matching-with-catalogue-data-not-prompts) | Data, lifecycle |
+| 18 | [Minimise customer data, and make deletion a command](#18-minimise-customer-data-and-make-deletion-a-command) | Governance, privacy |
 
 ---
 
@@ -159,3 +160,13 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 **Decision.** Treat this as a data problem. Map real catalogue attributes (pitch, nut style, product family) through `COMMERCE_ATTRIBUTE_MAP` rather than teaching a prompt to guess from names.
 
 **Consequences.** Match quality depends on the merchant's product data. That is a discovery question for every deployment, and a finding worth showing the merchant.
+
+### 18. Minimise customer data, and make deletion a command
+
+**Context.** RFQs carry personal data (names, emails, phone numbers, signatures). It can end up in five places: the Claude API, run files, the corrections log, the audit log and Magento. The corrections log is meant to grow the eval set, so customer text could become test data.
+
+**Decision.** The intake schema keeps only lines, the RFQ reference and the customer name, so contact details are not copied forward. The audit log has a `shape` mode that logs free text only as its length while keeping SKUs, quantities, IDs and attributes. `rfq-quote forget` deletes corrections by RFQ or by age, for erasure requests and scheduled retention. Every copy, its owner, lifetime and deletion route is listed in [data-handling.md](data-handling.md). Corrections must be anonymised before they join a golden set, and real golden sets never go in a public repository.
+
+**Rejected.** Encrypting the logs instead of minimising them (the operator holds the key, so the data is still there to leak). Leaving deletion to manual file editing (error-prone, and nobody does it on time). A blanket "no logging" mode (it breaks the audit trail decision 1 depends on).
+
+**Consequences.** `full` stays the default, because it is the most useful while debugging; production deployments should set `shape`. Run files have no automatic expiry yet. Anthropic retention depends on the account (30 days standard, or zero data retention on request) and on the model: the Covered Models (the Fable and Mythos families) require 30-day retention.

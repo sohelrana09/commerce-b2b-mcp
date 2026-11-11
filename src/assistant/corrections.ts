@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { QuoteReview } from "./pipeline.js";
 
@@ -54,4 +54,20 @@ export function readCorrections(path: string): CorrectionRecord[] {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw e;
   }
+}
+
+/**
+ * Delete correction records, for erasure requests and retention. Matches by
+ * RFQ document name, by age, or both (a record must match every filter given).
+ * Rewrites the file; returns how many records were removed.
+ */
+export function forgetCorrections(path: string, filter: { document?: string; olderThanDays?: number; now?: Date }): number {
+  if (filter.document === undefined && filter.olderThanDays === undefined) throw new Error("Give a document, an age, or both.");
+  const all = readCorrections(path);
+  const cutoff = filter.olderThanDays === undefined ? undefined : (filter.now ?? new Date()).getTime() - filter.olderThanDays * 86_400_000;
+  const drop = (r: CorrectionRecord) =>
+    (filter.document === undefined || r.document === filter.document) && (cutoff === undefined || Date.parse(r.recorded_at) < cutoff);
+  const keep = all.filter((r) => !drop(r));
+  if (keep.length !== all.length) writeFileSync(path, keep.map((r) => `${JSON.stringify(r)}\n`).join(""));
+  return all.length - keep.length;
 }

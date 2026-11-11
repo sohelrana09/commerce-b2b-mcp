@@ -47,7 +47,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
   const now = opts.now ?? Date.now;
   const mcpUrl = new URL("/mcp", http.publicUrl);
   const sessions = new Map<string, Session>();
-  const audit = opts.audit ?? createAuditSink(config.auditLog);
+  const audit = opts.audit ?? createAuditSink(config.auditLog, config.auditInput);
   const shared = config.backend === "mock" ? (opts.sharedBackend ?? new MockBackend()) : undefined;
 
   const closeSession = (id: string) => {

@@ -269,3 +269,18 @@ describe("service targets", () => {
     expect(md).toContain("| Wrong lines marked ready (release gate) | 0 | 0 | met |");
   });
 });
+
+describe("forgetting corrections", () => {
+  it("deletes one RFQ's records, or records past a retention period, and keeps the rest", async () => {
+    const { forgetCorrections } = await import("../src/assistant/corrections.js");
+    const { writeFileSync } = await import("node:fs");
+    const path = join(mkdtempSync(join(tmpdir(), "corr-")), "c.jsonl");
+    const rec = (document: string, recorded_at: string) => ({ id: `${document}#1`, source: "rep_correction", recorded_at, document, raw_text: "x", predicted_sku: null, expected_sku: null, expected_qty_each: null, rep_note: null });
+    writeFileSync(path, [rec("a.eml", "2026-01-01T00:00:00Z"), rec("b.eml", "2026-11-01T00:00:00Z"), rec("a.eml", "2026-11-05T00:00:00Z")].map((r) => JSON.stringify(r)).join("\n") + "\n");
+    expect(forgetCorrections(path, { document: "a.eml" })).toBe(2);
+    expect(readCorrections(path).map((r) => r.document)).toEqual(["b.eml"]);
+    expect(forgetCorrections(path, { olderThanDays: 5, now: new Date("2026-11-11T00:00:00Z") })).toBe(1);
+    expect(readCorrections(path)).toEqual([]);
+    expect(() => forgetCorrections(path, {})).toThrow();
+  });
+});

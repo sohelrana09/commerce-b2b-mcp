@@ -73,7 +73,7 @@ With no settings it runs against the mock store as a buyer at *Harbour Marine En
 | Check | `check_availability` and `get_customer_price` for the matched SKUs, batched. Every price and stock number comes from the store. | `pipeline.ts` |
 | Flag | 14 flag codes. A line is **ready** only when it has an exact, unique match, a confirmed quantity, stock and a price. Anything else is **review**: ambiguous stainless grade, missing length, size not stocked, imperial size, box with no pack size, implausible quantity, shortfall, partial match, non-fastener. | `pipeline.ts` |
 | Draft | Ready lines (or flagged ones too, with `--include-flagged` and a `REVIEW:` note) go to `draft_negotiable_quote`. The preview is shown, a person types `y` at a terminal, and only then is the confirmation token used. It saves a draft; it never submits. | `src/assistant/cli.ts` |
-| Learn | `rfq-quote correct` records the rep's choice in the same shape as the golden cases, so corrections grow the eval set. | `src/assistant/corrections.ts` |
+| Learn | `rfq-quote correct` records the rep's choice in the same shape as the golden cases, so corrections grow the eval set. `rfq-quote forget` deletes them by RFQ or by age ([data handling](docs/data-handling.md)). | `src/assistant/corrections.ts` |
 
 The model is used for one step, reading the RFQ. Everything after it is deterministic code over the MCP tools, so a run can be replayed and scored, and the model never sees a price it could change.
 
@@ -131,7 +131,7 @@ This is the part that matters most when an agent touches a live B2B store.
 
 **Known limit of propose-then-approve.** The token proves that the confirmed call matches the previewed one. It can't prove a human saw the preview: that depends on the MCP client showing it to them. For that reason the write tool is limited to drafts, and the server instructions tell the agent to wait for explicit approval.
 
-The reasoning behind these choices, and the alternatives rejected, is in [docs/decisions.md](docs/decisions.md).
+The reasoning behind these choices, and the alternatives rejected, is in [docs/decisions.md](docs/decisions.md). What customer data is stored where, for how long, and how to delete it is in [docs/data-handling.md](docs/data-handling.md).
 
 ## Connect to Adobe Commerce (PaaS)
 
@@ -236,6 +236,7 @@ Over HTTP, `COMMERCE_CALLER_EMAIL`, `COMMERCE_CUSTOMER_TOKEN` and `COMMERCE_CUST
 | `COMMERCE_TOOLS_ENABLED` | all | Comma-separated allowlist |
 | `COMMERCE_TOOLS_DISABLED` | none | Comma-separated denylist (ignored if `ENABLED` is set) |
 | `COMMERCE_AUDIT_LOG` | `stderr` | `stderr` or a file path for JSONL audit lines |
+| `COMMERCE_AUDIT_INPUT` | `full` | `full`, or `shape` to log free text in tool inputs only as its length (recommended in production) |
 | `COMMERCE_CONFIRM_SECRET` | random per process (mock only) | HMAC secret for confirmation tokens. Required outside mock mode |
 | `COMMERCE_CONFIRM_TTL_SECONDS` | `600` | Confirmation token lifetime |
 
@@ -296,6 +297,7 @@ npm run dev       # run from source with tsx
 - [ ] Parser evals on real catalogue names (e.g. "Screw Gudgeon" is read as a screw)
 - [x] v0.4: Streamable HTTP transport with OAuth, each token mapped to one company user, and per-call tracing
 - [x] Service targets for the quote assistant (cost, latency, quality), checked by every eval run
+- [x] Data-handling note, minimised audit mode and `rfq-quote forget` for erasure and retention
 - [ ] Run the effort and model sweep (built: `npm run eval -- --sweep`)
 - [ ] Shared token store for more than one instance
 - [ ] ACCS adapter with Adobe IMS; confirm which B2B APIs ACCS exposes before claiming parity

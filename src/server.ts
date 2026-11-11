@@ -26,7 +26,7 @@ export function createBackend(config: Config): CommerceBackend {
 
 export function createServer(config: Config, opts: { backend?: CommerceBackend; audit?: AuditSink } = {}) {
   const backend = opts.backend ?? createBackend(config);
-  const audit = opts.audit ?? createAuditSink(config.auditLog);
+  const audit = opts.audit ?? createAuditSink(config.auditLog, config.auditInput);
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: INSTRUCTIONS });
   const tools = registerAllTools(server, { backend, config, audit, caller: { email: config.callerEmail } });
   return { server, backend, tools };
