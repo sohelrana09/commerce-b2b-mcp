@@ -6,6 +6,23 @@ It is built for the B2B layer that generic Magento MCP servers leave out: compan
 
 > **Status: v0.4.** Mock mode and an Adobe Commerce PaaS adapter (2.4.7+ with B2B), verified end to end on a live **Adobe Commerce 2.4.8-p5 with B2B 1.5.2-p3** store (local copy of a production fastener catalogue, ~17,000 products). v0.3 added the [RFQ quote assistant](#rfq-quote-assistant) with a golden eval set. v0.4 adds a [remote transport](#remote-transport-streamable-http--oauth): Streamable HTTP with OAuth, where each token is one company user, plus per-call tracing. ACCS is next.
 
+## See it in one command
+
+No store, no API key, nothing saved. Needs Node 20+:
+
+```bash
+npx -y github:sohelrana09/commerce-b2b-mcp demo
+```
+
+The demo starts the MCP server in the same process against the mock store, as a buyer at *Harbour Marine Engineering*. A sample RFQ goes through the [quote assistant](#rfq-quote-assistant): each line is matched to a product, checked for stock and priced at the company's price. 8 lines come out ready and 3 are flagged for a person to check. The ready lines then become a draft negotiable quote preview, which is not saved. Intake is the free rule-based extractor. Claude intake finds more lines but needs an API key.
+
+Run it on your own RFQ (`.txt`, `.eml` or `.csv`) with `demo --rfq my-rfq.txt`. From a clone, `npm run demo` does the same. With Docker, which needs no Node:
+
+```bash
+docker build -t commerce-b2b-mcp .
+docker run --rm commerce-b2b-mcp demo
+```
+
 ## Try it in 2 minutes
 
 ```bash
@@ -195,14 +212,23 @@ Some B2B versions have no requisition-list ACL resource. There, only company adm
 stdio runs the server as one fixed company user on the user's machine. For a hosted server that many users share, run it over Streamable HTTP. Each user signs in with OAuth, and **each access token is one company user**, so every session is scoped exactly as stdio is (decision 1 still holds).
 
 ```bash
+npm run build
 COMMERCE_TRANSPORT=http \
 COMMERCE_PUBLIC_URL=http://localhost:3000 \
 COMMERCE_MOCK_PASSWORD='choose-a-demo-password' \
-npx commerce-b2b-mcp
+node dist/index.js
 # MCP endpoint: http://localhost:3000/mcp
 ```
 
-Add `http://localhost:3000/mcp` as a remote MCP server in a client that supports MCP OAuth. The client registers itself, opens the sign-in page, and the user signs in with their store email and password (mock: any fixture user, e.g. `sam.purchasing@harbour.example`, with the demo password).
+Or with Docker. The image defaults to the mock store over HTTP on port 8080, runs as a non-root user and has a `/healthz` health check:
+
+```bash
+docker build -t commerce-b2b-mcp .
+docker run --rm -p 8080:8080 -e COMMERCE_MOCK_PASSWORD='choose-a-demo-password' commerce-b2b-mcp
+# MCP endpoint: http://localhost:8080/mcp
+```
+
+Add the MCP endpoint (for example `http://localhost:3000/mcp`) as a remote MCP server in a client that supports MCP OAuth. The client registers itself, opens the sign-in page, and the user signs in with their store email and password (mock: any fixture user, e.g. `sam.purchasing@harbour.example`, with the demo password).
 
 How it works:
 
@@ -305,7 +331,8 @@ Working with Claude Code: [`CLAUDE.md`](CLAUDE.md) holds the project rules (call
 - [ ] Shared token store for more than one instance
 - [ ] ACCS adapter with Adobe IMS; confirm which B2B APIs ACCS exposes before claiming parity
 - [ ] App Builder / I/O Runtime deployment in stateless HTTP mode
-- [ ] `npx` and Docker one-command demo, demo GIF
+- [x] One-command demo with `npx` (from GitHub) and Docker, no store or API key needed
+- [ ] Demo GIF
 
 ## Licence
 

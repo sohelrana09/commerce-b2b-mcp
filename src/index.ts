@@ -27,6 +27,10 @@ function http(config: Config) {
 }
 
 async function main() {
+  if (process.argv[2] === "demo") {
+    const { runDemo } = await import("./demo.js");
+    return runDemo(process.argv.slice(3));
+  }
   const config = loadConfig();
   if (config.transport === "http") http(config);
   else await stdio(config);

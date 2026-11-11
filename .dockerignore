@@ -1,0 +1,17 @@
+# Only package files, tsconfig.json and src/ are needed. Credentials and local data never enter the build context.
+.git
+node_modules
+dist
+coverage
+.env
+.env.*
+.mcp.json
+scripts
+audit.jsonl
+*.log
+*.run.json
+evals
+test
+docs
+.claude
+.github

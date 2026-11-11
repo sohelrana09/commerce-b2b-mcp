@@ -16,11 +16,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { memoryAuditSink } from "../../audit.js";
-import { loadConfig } from "../../config.js";
-import { createServer } from "../../server.js";
-import { connectTransport, type CommerceTools } from "../commerce.js";
+import { inProcessTools } from "../in-process.js";
 import { ClaudeExtractor, EFFORTS, type Effort } from "../extract/claude.js";
 import { HeuristicExtractor } from "../extract/heuristic.js";
 import { loadRfq } from "../extract/input.js";
@@ -28,6 +24,8 @@ import type { Extractor } from "../extract/schema.js";
 import { reviewRfq, type LineReview, type QuoteReview } from "../pipeline.js";
 import { usageCost } from "../pricing.js";
 import { targetTable } from "./targets.js";
+
+export { inProcessTools };
 
 interface ExpectedLine {
   text: string;
@@ -42,14 +40,6 @@ interface ExpectedDoc {
   file: string;
   expect_injection_flag: boolean;
   lines: ExpectedLine[];
-}
-
-export async function inProcessTools(callerEmail = "sam.purchasing@harbour.example"): Promise<CommerceTools> {
-  const config = loadConfig({ COMMERCE_BACKEND: "mock", COMMERCE_CALLER_EMAIL: callerEmail, COMMERCE_CONFIRM_SECRET: "eval-only-secret" });
-  const { server } = createServer(config, { audit: memoryAuditSink() });
-  const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverT);
-  return connectTransport(clientT);
 }
 
 const words = (s: string) => new Set(s.toLowerCase().replace(/set screw/g, "setscrew").split(/[^a-z0-9.]+/).filter((w) => w.length > 0));
