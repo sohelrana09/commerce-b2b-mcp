@@ -1,3 +1,4 @@
+import { mapLimit } from "../concurrency.js";
 import type { CommerceTools } from "./commerce.js";
 import type { ExtractedLine, Extraction, ExtractionUsage, Extractor, RfqDocument } from "./extract/schema.js";
 
@@ -54,7 +55,7 @@ export interface Candidate {
   name: string;
   score: number;
   mismatched: string[];
-  pack_size: number;
+  pack_size: number | null;
   /** Style words shared with the customer's text; only used to break score ties. */
   style?: number;
 }
@@ -80,7 +81,14 @@ export interface QuoteReview {
   totals: { ready_lines: number; review_lines: number; ready_subtotal: number; currency: string | null };
 }
 
+/** The fields of tool results this pipeline reads (the tools' own output shapes). */
+interface SearchRow { sku: string; name: string; score: number; mismatched?: string[]; pack_size: number | null }
+interface StockRow { sku: string; salable_qty: number | null; in_stock: boolean; message: string }
+interface PriceRow { sku: string; unit_price: number; line_total: number; currency: string; price_source: string }
+
 const UNUSUAL_QTY = 250_000;
+/** The draft_negotiable_quote tool refuses more than this for one SKU. */
+const MAX_LINE_QTY = 1_000_000;
 const SEARCH_CONCURRENCY = 5;
 
 const needsLength = (t: ExtractedLine["part_type"]) => t === "bolt" || t === "screw" || t === null;
@@ -118,9 +126,9 @@ export function searchArgs(line: ExtractedLine) {
   if (line.part_type && line.part_type !== "other") filters.part_type = line.part_type;
   if (line.head) filters.head = line.head;
   if (line.thread && /^M\d+(\.\d+)?$/.test(line.thread)) filters.thread = line.thread;
-  if (line.length_mm) filters.length_mm = line.length_mm;
+  if (line.length_mm && line.length_mm <= 10_000) filters.length_mm = line.length_mm;
   if (line.material && line.material !== "stainless_unspecified") filters.material = line.material;
-  if (line.grade) filters.grade = line.grade;
+  if (line.grade && /^[A-Za-z0-9.\-]{1,10}$/.test(line.grade)) filters.grade = line.grade;
   if (line.finish) filters.finish = line.finish;
 
   let query = line.description.slice(0, 200) || line.raw_text.slice(0, 200);
@@ -161,20 +169,6 @@ export function breakTies(line: ExtractedLine, candidates: Candidate[]): Candida
     .map((x) => x.c);
 }
 
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i]!, i);
-      }
-    }),
-  );
-  return out;
-}
-
 const chunk = <T>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
 export async function reviewLines(tools: CommerceTools, extraction: Extraction): Promise<LineReview[]> {
@@ -194,9 +188,12 @@ export async function reviewLines(tools: CommerceTools, extraction: Extraction):
     }
     // With no thread there is nothing safe to search for; any "match" would be a guess.
     if (!line.thread) return { index, line, flags, candidates: [] as Candidate[] };
+    // Values the search tool would refuse are left out of the search, and a person is told.
+    if (line.length_mm && line.length_mm > 10_000) flags.push({ code: "extraction_uncertain", message: `Length ${line.length_mm} mm is not plausible; it was not used in the search.` });
+    if (line.grade && !/^[A-Za-z0-9.\-]{1,10}$/.test(line.grade)) flags.push({ code: "extraction_uncertain", message: `"${line.grade.slice(0, 40)}" is not a property class; it was not used in the search.` });
     const res = await tools.call("search_parts", searchArgs(line));
     if (res.isError) throw new Error(`search_parts failed on line ${index + 1}: ${res.data?.error?.message ?? "unknown error"}`);
-    const candidates: Candidate[] = (res.data.results ?? []).map((r: any) => ({
+    const candidates: Candidate[] = ((res.data.results ?? []) as SearchRow[]).map((r) => ({
       sku: r.sku,
       name: r.name,
       score: r.score,
@@ -231,7 +228,7 @@ export async function reviewLines(tools: CommerceTools, extraction: Extraction):
     if (!Number.isInteger(qty) || qty < 1 || qty > UNUSUAL_QTY) {
       flags.push({ code: "unusual_quantity", message: `Quantity ${qty} looks wrong for this line; confirm it.` });
     }
-    if (match && Number.isInteger(qty) && qty > 0 && qty % match.pack_size !== 0) {
+    if (match && match.pack_size && Number.isInteger(qty) && qty > 0 && qty % match.pack_size !== 0) {
       const packs = Math.ceil(qty / match.pack_size);
       flags.push({ code: "pack_rounding", message: `Sold in packs of ${match.pack_size}: ${qty} rounds up to ${packs * match.pack_size} (${packs} packs).` });
     }
@@ -257,7 +254,7 @@ export async function reviewLines(tools: CommerceTools, extraction: Extraction):
     const skus = Object.keys(qtyNeeded);
     const res = await tools.call("check_availability", { skus, qty_needed: qtyNeeded });
     if (res.isError) throw new Error(`check_availability failed: ${res.data?.error?.message ?? "unknown error"}`);
-    const bySku = new Map<string, any>(res.data.items.map((i: any) => [i.sku, i]));
+    const bySku = new Map<string, StockRow>((res.data.items as StockRow[]).map((i) => [i.sku, i]));
     for (const r of batch) {
       const a = bySku.get(r.match!.sku);
       if (!a) continue;
@@ -268,18 +265,30 @@ export async function reviewLines(tools: CommerceTools, extraction: Extraction):
     }
   }
   for (const batch of chunk(priced, 50)) {
+    const apply = (rows: LineReview[], lines: PriceRow[]) =>
+      rows.forEach((r, i) => {
+        const p = lines[i];
+        if (p && p.sku === r.match!.sku) {
+          r.price = { unit_price: p.unit_price, line_total: p.line_total, currency: p.currency, price_source: p.price_source };
+        }
+      });
     const res = await tools.call("get_customer_price", { lines: batch.map((r) => ({ sku: r.match!.sku, qty: r.qty_each })) });
-    if (res.isError) throw new Error(`get_customer_price failed: ${res.data?.error?.message ?? "unknown error"}`);
-    batch.forEach((r, i) => {
-      const p = res.data.lines[i];
-      if (p && p.sku === r.match!.sku) {
-        r.price = { unit_price: p.unit_price, line_total: p.line_total, currency: p.currency, price_source: p.price_source };
+    if (!res.isError) {
+      apply(batch, res.data.lines);
+    } else {
+      // The tool refuses a whole call when one SKU has no price. Ask line by line, so one unpriced part
+      // flags only its own line and the rest of the RFQ is still priced.
+      for (const r of batch) {
+        const one = await tools.call("get_customer_price", { lines: [{ sku: r.match!.sku, qty: r.qty_each }] });
+        if (!one.isError) apply([r], one.data.lines);
+        else if (one.data?.error?.retryable) throw new Error(`get_customer_price failed: ${one.data.error.message}`);
       }
-    });
+    }
   }
 
   for (const r of reviews) {
     if (r.match && !r.price && r.qty_each <= UNUSUAL_QTY) r.flags.push({ code: "no_price", message: "The store returned no price for this SKU and quantity." });
+    else if (r.price && !(r.price.unit_price > 0)) r.flags.push({ code: "no_price", message: "The store's price for this SKU is zero. Confirm it before quoting." });
     r.status = r.match && !r.flags.some((f) => FLAG_SEVERITY[f.code] === "review") ? "ready" : "review";
   }
   return reviews;
@@ -327,6 +336,11 @@ export function draftInput(review: QuoteReview, opts: DraftOptions = {}) {
       bySku.set(l.match!.sku, { sku: l.match!.sku, qty: l.qty_each, refs: [ref], flagged: l.status === "review" });
     }
   }
+  for (const l of bySku.values()) {
+    if (l.qty > MAX_LINE_QTY) {
+      throw new Error(`Lines ${l.refs.join(", ")} match ${l.sku} and total ${l.qty}, over the quote tool's limit of ${MAX_LINE_QTY} for one SKU. Split them across two quotes or lower a quantity.`);
+    }
+  }
   const name = (opts.name ?? review.extraction.rfq_reference ?? `RFQ ${review.document}`).slice(0, 120);
   const skipped = review.lines.length - chosen.length;
   return {
@@ -338,4 +352,31 @@ export function draftInput(review: QuoteReview, opts: DraftOptions = {}) {
       note: `${l.flagged ? "REVIEW: " : ""}RFQ line ${l.refs.join(", ")}`.slice(0, 255),
     })),
   };
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Read a saved run file. It is JSON a person may have edited or received, so check the parts the next steps rely on
+ * (the quote it drafts and the corrections it records) instead of trusting a cast.
+ */
+export function parseRun(text: string): QuoteReview {
+  let v: unknown;
+  try {
+    v = JSON.parse(text);
+  } catch {
+    throw new Error("The run file is not valid JSON.");
+  }
+  const bad = (why: string): never => {
+    throw new Error(`The run file is not a saved review (${why}). Make one with: rfq-quote review <rfq>`);
+  };
+  if (!isObj(v) || typeof v.document !== "string" || !Array.isArray(v.lines) || !isObj(v.extraction)) return bad("missing document, lines or extraction");
+  v.lines.forEach((l: unknown, i: number) => {
+    if (!isObj(l) || !isObj(l.line) || typeof l.line.raw_text !== "string") return bad(`line ${i + 1} has no text`);
+    if (typeof l.qty_each !== "number" || !Number.isFinite(l.qty_each)) return bad(`line ${i + 1} has no quantity`);
+    if (l.status !== "ready" && l.status !== "review") return bad(`line ${i + 1} has no status`);
+    if (!Array.isArray(l.flags)) return bad(`line ${i + 1} has no flags`);
+    if (l.match !== null && l.match !== undefined && (!isObj(l.match) || typeof l.match.sku !== "string" || !/^[\x21-\x7e]{1,64}$/.test(l.match.sku))) return bad(`line ${i + 1} has an invalid SKU`);
+  });
+  return v as unknown as QuoteReview;
 }

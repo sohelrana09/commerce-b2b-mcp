@@ -40,7 +40,7 @@ export function recordCorrection(
     rep_note: decision.note ?? null,
   };
   mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify(rec)}\n`);
+  appendFileSync(path, `${JSON.stringify(rec)}\n`, { mode: 0o600 });
   return rec;
 }
 

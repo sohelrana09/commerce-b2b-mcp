@@ -9,7 +9,7 @@ import { ClaudeExtractor, EFFORTS, type Effort } from "./extract/claude.js";
 import { HeuristicExtractor } from "./extract/heuristic.js";
 import { loadRfq } from "./extract/input.js";
 import type { Extractor } from "./extract/schema.js";
-import { draftInput, reviewRfq, type QuoteReview } from "./pipeline.js";
+import { draftInput, parseRun, reviewRfq } from "./pipeline.js";
 import { renderReview } from "./report.js";
 
 const USAGE = `rfq-quote: turn a customer RFQ into a reviewed draft negotiable quote.
@@ -62,9 +62,9 @@ async function review(args: string[]) {
   const doc = loadRfq(file);
   const result = await withTools((tools) => reviewRfq(doc, extractorFor(values.extractor), tools));
   const md = renderReview(result);
-  if (values.out) writeFileSync(values.out, `${md}\n`);
+  if (values.out) writeFileSync(values.out, `${md}\n`, { mode: 0o600 });
   const save = values.save ?? `${file}.run.json`;
-  writeFileSync(save, JSON.stringify(result, null, 2));
+  writeFileSync(save, JSON.stringify(result, null, 2), { mode: 0o600 });
   console.log(md);
   console.error(`\nSaved the run to ${save}. Next: rfq-quote draft ${save}`);
 }
@@ -76,7 +76,7 @@ async function draft(args: string[]) {
     options: { "include-flagged": { type: "boolean", default: false }, name: { type: "string" } },
   });
   if (!positionals[0]) throw new Error(USAGE);
-  const run = JSON.parse(readFileSync(positionals[0], "utf8")) as QuoteReview;
+  const run = parseRun(readFileSync(positionals[0], "utf8"));
   const input = draftInput(run, { includeFlagged: values["include-flagged"], ...(values.name ? { name: values.name } : {}) });
   if (!input.lines.length) {
     console.log("No lines are ready to quote. Resolve the review flags first, or pass --include-flagged.");
@@ -121,7 +121,7 @@ async function correct(args: string[]) {
     },
   });
   if (!positionals[0] || !values.line || (!values.sku && !values.none)) throw new Error(USAGE);
-  const run = JSON.parse(readFileSync(positionals[0], "utf8")) as QuoteReview;
+  const run = parseRun(readFileSync(positionals[0], "utf8"));
   const rec = recordCorrection(values.log!, run, values.line, {
     sku: values.none ? null : values.sku!,
     ...(values.qty ? { qty_each: Number(values.qty) } : {}),
