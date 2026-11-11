@@ -295,6 +295,76 @@ for (const [name, makeStore, enabled] of sharedStores) {
   });
 }
 
+/** One JSON-RPC call with no session, as a stateless client or a serverless platform would send it. */
+async function rpc(base: string, token: string, method: string, params: Record<string, unknown> = {}) {
+  const res = await fetch(`${base}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2025-06-18",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const body = res.headers.get("content-type")?.includes("json") ? ((await res.json()) as { result?: any; error?: { message: string } }) : undefined;
+  return { res, body };
+}
+const toolData = (body: { result?: any } | undefined) => JSON.parse(body!.result.content[0].text);
+
+describe("Stateless HTTP mode", () => {
+  const STATELESS = { ...SHARED, COMMERCE_HTTP_SESSIONS: "stateless" };
+
+  it("works with the SDK client, issues no session id, and refuses GET", async () => {
+    const h = await start(STATELESS);
+    const { token } = await tokenFor(h.base, h.mcpUrl.href);
+    const { client, transport } = await mcpClient(new URL("/mcp", h.base), token);
+    expect(transport.sessionId).toBeUndefined();
+    const res = await client.callTool({ name: "get_company_context", arguments: {} });
+    expect(JSON.parse((res.content as Array<{ text: string }>)[0]!.text).user.email).toBe(SAM);
+    expect(h.sessions.size).toBe(0);
+
+    const get = await fetch(`${h.base}/mcp`, { headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" } });
+    expect(get.status).toBe(405);
+    expect(get.headers.get("allow")).toBe("POST");
+  });
+
+  it("answers any request on any instance, including a draft quote previewed on one and confirmed on another", async () => {
+    const store = new MemoryStore();
+    const a = await start(STATELESS, { store });
+    const b = await start(STATELESS, { store });
+    const { token } = await tokenFor(a.base, a.mcpUrl.href);
+
+    const ctx = await rpc(b.base, token, "tools/call", { name: "get_company_context", arguments: {} });
+    expect(ctx.res.status).toBe(200);
+    expect(toolData(ctx.body).company_id).toBe("CO-3003");
+
+    const input = { name: "Stateless test", lines: [{ sku: "HF-HSS-M8-30-A4", qty: 100 }] };
+    const preview = toolData((await rpc(a.base, token, "tools/call", { name: "draft_negotiable_quote", arguments: input })).body);
+    expect(preview.status).toBe("preview_requires_approval");
+    const saved = toolData(
+      (await rpc(b.base, token, "tools/call", { name: "draft_negotiable_quote", arguments: { ...input, confirmation_token: preview.confirmation_token } })).body,
+    );
+    expect(saved.status).toBe("draft_saved");
+
+    // One backend per user is reused between requests, so the company check stays cached.
+    await rpc(b.base, token, "tools/list");
+    expect(b.backends.size).toBe(1);
+  });
+
+  it("refuses a revoked token on every instance and drops its backend", async () => {
+    const store = new MemoryStore();
+    const a = await start(STATELESS, { store });
+    const b = await start(STATELESS, { store });
+    const { token, clientId } = await tokenFor(a.base, a.mcpUrl.href);
+    expect((await rpc(b.base, token, "tools/list")).res.status).toBe(200);
+    await fetch(`${a.base}/revoke`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: form({ token, client_id: clientId }) });
+    expect((await rpc(b.base, token, "tools/list")).res.status).toBe(401);
+    await b.sweep();
+    expect(b.backends.size).toBe(0);
+  });
+});
+
 describe("Grant expiry", () => {
   it("signs an expired grant out at the store exactly once, however many instances sweep", async () => {
     let t = Date.now();
@@ -328,6 +398,13 @@ describe("HTTP config", () => {
     expect(loadConfig({ ...base, COMMERCE_HTTP_TOKEN_TTL_SECONDS: "86400" }).http!.tokenTtlSeconds).toBe(3600);
     expect(() => loadConfig({ COMMERCE_BACKEND: "mock", COMMERCE_TRANSPORT: "http" })).toThrow(/COMMERCE_MOCK_PASSWORD/);
   });
+  it("accepts stateful or stateless sessions only", () => {
+    const http = { COMMERCE_TRANSPORT: "http", COMMERCE_MOCK_PASSWORD: PASSWORD };
+    expect(loadConfig(http).http!.sessions).toBe("stateful");
+    expect(loadConfig({ ...http, COMMERCE_HTTP_SESSIONS: "stateless" }).http!.sessions).toBe("stateless");
+    expect(() => loadConfig({ ...http, COMMERCE_HTTP_SESSIONS: "sticky" })).toThrow(/COMMERCE_HTTP_SESSIONS/);
+  });
+
   it("needs a Redis URL and a 32-character state key for the shared store, and never echoes the URL", () => {
     const http = { COMMERCE_TRANSPORT: "http", COMMERCE_MOCK_PASSWORD: PASSWORD };
     expect(loadConfig(http).http!.state).toEqual({ kind: "memory" });

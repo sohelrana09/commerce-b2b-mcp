@@ -30,6 +30,11 @@ export interface HttpConfig {
   mockPassword: string;
   /** Where sign-in state lives: this process's memory, or Redis shared by several instances (ADR 19). */
   state: StateConfig;
+  /**
+   * "stateful": MCP sessions, each held by the instance that opened it (needs sticky routing with several).
+   * "stateless": every POST stands alone, so any instance or a serverless function can answer it (ADR 20).
+   */
+  sessions: "stateful" | "stateless";
 }
 
 export type StateConfig =
@@ -180,10 +185,17 @@ function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfi
     port,
     publicUrl,
     state: loadState(env),
+    sessions: loadSessions(env.COMMERCE_HTTP_SESSIONS),
     tokenTtlSeconds: Math.min(ttl, 3600),
     redirectHosts: parseList(env.COMMERCE_OAUTH_REDIRECT_HOSTS) ?? [],
     mockPassword,
   };
+}
+
+function loadSessions(raw: string | undefined): HttpConfig["sessions"] {
+  const v = raw ?? "stateful";
+  if (v !== "stateful" && v !== "stateless") throw new Error(`COMMERCE_HTTP_SESSIONS must be "stateful" or "stateless", got "${v}"`);
+  return v;
 }
 
 function loadState(env: NodeJS.ProcessEnv): StateConfig {

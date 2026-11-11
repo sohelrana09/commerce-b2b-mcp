@@ -402,6 +402,7 @@ How it works:
 | `COMMERCE_HTTP_TOKEN_TTL_SECONDS` | `3600` | Access token lifetime, capped at 3600 |
 | `COMMERCE_OAUTH_REDIRECT_HOSTS` | none | Extra https redirect hosts, e.g. `claude.ai` |
 | `COMMERCE_MOCK_PASSWORD` | none | Mock backend only: the demo users' password (12+ characters) |
+| `COMMERCE_HTTP_SESSIONS` | `stateful` | `stateful` (MCP sessions, sticky with several instances) or `stateless` (every request stands alone) |
 | `COMMERCE_STATE_STORE` | `memory` | `memory` (one instance) or `redis` (shared by several) |
 | `COMMERCE_REDIS_URL` | none | Redis only: `rediss://` address, with the password in it |
 | `COMMERCE_STATE_KEY` | none | Redis only: 32+ characters, the same on every instance. Encrypts what is stored |
@@ -422,12 +423,22 @@ COMMERCE_STATE_KEY='32+ random characters, the same on every instance'
 - **Any instance can serve any step.** A client can register on one instance, sign in on another and call `/mcp` on a third. Sign-in failures are counted across all of them.
 - **Revocation and expiry reach every instance.** A revoked token is refused everywhere at once. Each instance closes its own sessions for that grant within a minute, and each expired grant is signed out at the store by exactly one instance.
 - **Redis holds no readable secrets.** Every value is encrypted with AES-256-GCM, and every key is a hash of the real id. Changing `COMMERCE_STATE_KEY` signs everyone out.
-- **Sessions stay where they started.** Route by the `Mcp-Session-Id` header (sticky sessions). Without that, a request that lands on another instance gets 404 and the client opens a new session.
+- **Sessions stay where they started.** Route by the `Mcp-Session-Id` header (sticky sessions). Without that, a request that lands on another instance gets 404 and the client opens a new session. Or use stateless mode, below, which needs no sticky routing.
 
 The server checks it can reach Redis before it starts listening. Use `rediss://`: with plain `redis://` to a remote host it starts, but warns that the Redis password crosses the network in clear. The design is [decision 19](docs/decisions.md#19-shared-sign-in-state-in-redis-encrypted-for-more-than-one-instance).
 
+### Stateless mode
+
+With `COMMERCE_HTTP_SESSIONS=stateless`, there are no MCP sessions: each POST to `/mcp` carries its token, is answered as plain JSON, and leaves nothing behind. Any instance can answer any request, so it suits a plain load balancer or a serverless platform, together with the [shared Redis store](#several-instances).
+
+- **Writes still need approval.** A draft quote previewed on one instance can be confirmed on another. Every instance needs the same `COMMERCE_CONFIRM_SECRET`.
+- **No server-to-client stream.** GET and DELETE on `/mcp` return 405, and the server cannot send notifications. None of the tools use them.
+- **Fewer store calls.** Each instance keeps one backend per signed-in user for 5 minutes, so the company check is not repeated on every call.
+
+The design is [decision 20](docs/decisions.md#20-a-stateless-http-mode-for-load-balancers-and-serverless).
+
 **Limits.**
-- **One instance by default.** Clients, codes and tokens are kept in memory, and a restart signs everyone out. To run several instances, use the [shared Redis store](#several-instances). App Builder also needs a stateless HTTP mode, which is still to do.
+- **One instance by default.** Clients, codes and tokens are kept in memory, and a restart signs everyone out. To run several instances, use the [shared Redis store](#several-instances), with sticky sessions or [stateless mode](#stateless-mode).
 - **TLS.** Put TLS in front (a reverse proxy) for anything beyond localhost.
 - **Proxies.** Behind a proxy, the sign-in lockout counts per proxy address until trusted proxy headers are configured.
 - **Short store tokens.** If the store's customer token lifetime is shorter than the access token's, tools return `FORBIDDEN` with a hint to sign in again.
@@ -538,12 +549,13 @@ Done:
   - a data-handling note, a minimised audit mode, and `rfq-quote forget` for erasure and retention;
   - team setup for Claude Code;
   - a one-command demo with `npx` and Docker;
-  - a shared, encrypted Redis store for sign-in state, so the HTTP server can run as several instances.
+  - a shared, encrypted Redis store for sign-in state, so the HTTP server can run as several instances;
+  - a stateless HTTP mode, so any instance or a serverless function can answer any request.
 
 Next:
 - [ ] Run the effort and model sweep (built: `npm run eval -- --sweep`)
 - [ ] ACCS adapter with Adobe IMS; confirm which B2B APIs ACCS exposes before claiming parity
-- [ ] App Builder / I/O Runtime deployment in stateless HTTP mode
+- [ ] App Builder / I/O Runtime packaging and deployment guide (the stateless HTTP mode it needs is built)
 - [ ] Golden set from a merchant's real past quotes (with permission), and catalogue attributes for pitch and nut style
 - [ ] Test with an inventory integration token (MSI salable qty, per-source stock)
 - [ ] Parser evals on real catalogue names (e.g. "Screw Gudgeon" is read as a screw)
@@ -575,7 +587,7 @@ The tools, scoping, quote flow, OAuth and audit work for any B2B catalogue. The 
 It is a reference build with security in mind. Before going live:
 - run it over HTTP behind TLS;
 - set `COMMERCE_CONFIRM_SECRET` and `COMMERCE_AUDIT_INPUT=shape`;
-- run one instance, or several with the [shared Redis store](#several-instances) and sticky sessions;
+- run one instance, or several with the [shared Redis store](#several-instances) and either sticky sessions or [stateless mode](#stateless-mode);
 - measure the quote assistant on your own past quotes before you trust its "ready" lines.
 
 ## Contributing

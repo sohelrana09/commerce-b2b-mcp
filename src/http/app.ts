@@ -33,6 +33,9 @@ export interface HttpAppOptions {
 }
 
 const IDLE_MS = 30 * 60_000;
+/** Stateless mode: how long a user's backend (and its cached company check) is kept between requests. */
+const BACKEND_IDLE_MS = 5 * 60_000;
+const MAX_BACKENDS = 500;
 const MAX_SESSIONS = 500;
 const MAX_SESSIONS_PER_USER = 10;
 
@@ -52,6 +55,9 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
   const sessions = new Map<string, Session>();
   const audit = opts.audit ?? createAuditSink(config.auditLog, config.auditInput);
   const shared = config.backend === "mock" ? (opts.sharedBackend ?? new MockBackend()) : undefined;
+
+  // Stateless mode keeps one backend per grant, so the PaaS company-membership check stays cached between requests.
+  const backends = new Map<string, { backend: CommerceBackend; lastUsed: number }>();
 
   const closeSession = (id: string) => {
     const s = sessions.get(id);
@@ -73,6 +79,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     redirectHosts: http.redirectHosts,
     onGrantEnded: (grantId) => {
       for (const [id, s] of sessions) if (s.grantId === grantId) closeSession(id);
+      backends.delete(grantId);
     },
     now,
   });
@@ -114,9 +121,40 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     expectedResource: mcpUrl,
   });
 
+  /**
+   * Stateless (ADR 20): each POST gets a fresh McpServer and transport for the
+   * token's user, answered as plain JSON, then both are closed. Nothing ties a
+   * request to this instance, so a load balancer or a serverless platform can
+   * send the next one anywhere. There is no GET stream and no DELETE.
+   */
+  const statelessRequest = async (req: Request, res: Response, grantId: string) => {
+    if (req.method !== "POST") {
+      res.set("Allow", "POST");
+      return void rpcError(res, 405, "This server is stateless: send each request as a POST, with no session.");
+    }
+    const user = await provider.userForGrant(grantId);
+    if (!user) return void rpcError(res, 401, "Sign-in has ended. Sign in again.");
+    let entry = backends.get(grantId);
+    if (!entry) {
+      if (backends.size >= MAX_BACKENDS) backends.delete(backends.keys().next().value!);
+      entry = { backend: backendFor(user), lastUsed: now() };
+      backends.set(grantId, entry);
+    }
+    entry.lastUsed = now();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    const { server } = createServer({ ...config, callerEmail: user.email }, { backend: entry.backend, audit });
+    res.on("close", () => {
+      void transport.close().catch(() => undefined);
+      void server.close().catch(() => undefined);
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  };
+
   app.all("/mcp", bearer, async (req: Request, res: Response) => {
     const email = String(req.auth!.extra!.email);
     const grantId = String(req.auth!.extra!.grant_id);
+    if (http.sessions === "stateless") return statelessRequest(req, res, grantId);
     const sid = req.header("mcp-session-id");
 
     if (sid) {
@@ -174,6 +212,9 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
       if (!alive.has(s.grantId)) alive.set(s.grantId, (await provider.userForGrant(s.grantId)) !== undefined);
       if (!alive.get(s.grantId)) closeSession(id);
     }
+    for (const [grantId, b] of [...backends]) {
+      if (now() - b.lastUsed > BACKEND_IDLE_MS || (await provider.userForGrant(grantId)) === undefined) backends.delete(grantId);
+    }
   };
   const timer = setInterval(() => {
     sweep().catch((err: unknown) => process.stderr.write(`[commerce-b2b-mcp] sweep failed: ${err instanceof Error ? err.message : String(err)}\n`));
@@ -184,6 +225,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     app,
     provider,
     sessions,
+    backends,
     mcpUrl,
     sweep,
     /** Resolves once the sign-in state store is reachable. Call before listening. */

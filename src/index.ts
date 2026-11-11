@@ -21,7 +21,7 @@ async function http(config: Config) {
     log("warning: COMMERCE_REDIS_URL uses redis:// to a remote host. Stored values are encrypted, but the Redis password crosses the network in clear. Use rediss://.");
   }
   const listener = app.listen(h.port, h.host, () => {
-    log(`http backend=${config.backend} state=${h.state.kind} listening on ${h.host}:${h.port}, MCP endpoint ${mcpUrl.href}, callers sign in with OAuth`);
+    log(`http backend=${config.backend} state=${h.state.kind} sessions=${h.sessions} listening on ${h.host}:${h.port}, MCP endpoint ${mcpUrl.href}, callers sign in with OAuth`);
   });
   const stop = () => {
     void close().finally(() => listener.close(() => process.exit(0)));
