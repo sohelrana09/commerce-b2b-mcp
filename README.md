@@ -285,6 +285,8 @@ npm run typecheck
 npm run dev       # run from source with tsx
 ```
 
+Working with Claude Code: [`CLAUDE.md`](CLAUDE.md) holds the project rules (caller-scoped access only, no credentials or client data in the repo, no paid eval runs without approval, the safety gate stays at zero). [`.claude/settings.json`](.claude/settings.json) shares the team's permissions: tests and the free eval run without prompts, paid Claude runs and `git push` ask first, credential and log files are not readable, and a hook typechecks after every TypeScript edit. Onboarding, shared vs personal settings and the pull-request review checklist are in [docs/team-setup.md](docs/team-setup.md).
+
 ## Roadmap
 
 - [x] v0.1: 9 tools, safety model, mock backend, tests, CI
@@ -298,6 +300,7 @@ npm run dev       # run from source with tsx
 - [x] v0.4: Streamable HTTP transport with OAuth, each token mapped to one company user, and per-call tracing
 - [x] Service targets for the quote assistant (cost, latency, quality), checked by every eval run
 - [x] Data-handling note, minimised audit mode and `rfq-quote forget` for erasure and retention
+- [x] Team setup: project `CLAUDE.md`, shared Claude Code permissions and typecheck hook, review workflow
 - [ ] Run the effort and model sweep (built: `npm run eval -- --sweep`)
 - [ ] Shared token store for more than one instance
 - [ ] ACCS adapter with Adobe IMS; confirm which B2B APIs ACCS exposes before claiming parity

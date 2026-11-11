@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm test -- *)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run build)",
+      "Bash(npm run eval)",
+      "Bash(npm run eval -- --compare)",
+      "Bash(npm run eval -- --extractor heuristic)",
+      "Bash(npx vitest run *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)"
+    ],
+    "ask": [
+      "Bash(npm run eval -- --extractor claude*)",
+      "Bash(npm run eval -- --sweep*)",
+      "Bash(npx tsx src/assistant/eval/run.ts *)",
+      "Bash(npx tsx src/assistant/cli.ts review *)",
+      "Bash(rfq-quote review *)",
+      "Bash(git push*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./.mcp.json)",
+      "Read(./scripts/**)",
+      "Read(./audit.jsonl)",
+      "Read(./evals/corrections.jsonl)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.ts) cd \"$CLAUDE_PROJECT_DIR\" && out=$(npx --no-install tsc -p tsconfig.json --noEmit 2>&1) || { printf 'Typecheck failed after editing %s:\\n%s\\n' \"$f\" \"$(printf '%s' \"$out\" | head -30)\" >&2; exit 2; } ;; esac",
+            "timeout": 60,
+            "statusMessage": "Typechecking"
+          }
+        ]
+      }
+    ]
+  }
+}
