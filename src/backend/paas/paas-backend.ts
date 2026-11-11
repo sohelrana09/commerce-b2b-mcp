@@ -1,3 +1,4 @@
+import { mapLimit } from "../../concurrency.js";
 import { ToolError } from "../../errors.js";
 import { attributesFromText, parseFastenerText } from "../../normalize.js";
 import type {
@@ -25,7 +26,7 @@ import { CustomerTokenProvider, type CustomerAuth } from "./auth.js";
 import { graphql, restGet, type FetchLike, type HttpOptions } from "./http.js";
 import * as Q from "./queries.js";
 
-export type AttributeKey = keyof Omit<PartAttributes, "standard">;
+export type AttributeKey = keyof Omit<PartAttributes, "standard"> | "pack_size";
 
 export interface PaasOptions {
   baseUrl: string;
@@ -110,6 +111,10 @@ function flattenAcl(nodes: GqlAcl[] | null | undefined, out = new Set<string>())
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const CONTEXT_TTL_MS = 60_000;
+/** Inventory REST calls in flight at once for one availability request. */
+const INVENTORY_CONCURRENCY = 5;
+/** Time allowed for saving line notes after a quote exists; later notes are reported, not waited for. */
+const NOTES_BUDGET_MS = 45_000;
 
 /**
  * Adobe Commerce PaaS adapter (2.4.7+ with B2B).
@@ -135,8 +140,9 @@ export class PaasBackend implements CommerceBackend {
   private readonly http: HttpOptions;
   private readonly tokens: CustomerTokenProvider;
   private readonly withAttrs: boolean;
-  private context: { at: number; value: CompanyContext } | null = null;
+  private context: { at: number; email: string; value: CompanyContext } | null = null;
   private sourceNames: Map<string, string> | null = null;
+  private readonly stockSources = new Map<number, Set<string>>();
 
   constructor(private readonly opts: PaasOptions) {
     this.http = paasHttp(opts);
@@ -156,7 +162,8 @@ export class PaasBackend implements CommerceBackend {
   // ---------------------------------------------------------------- company
 
   async getCompanyContext(caller: Caller): Promise<CompanyContext> {
-    if (this.context && Date.now() - this.context.at < CONTEXT_TTL_MS) return this.context.value;
+    // The cached check belongs to one caller; a different caller never reuses it.
+    if (this.context && this.context.email === caller.email.toLowerCase() && Date.now() - this.context.at < CONTEXT_TTL_MS) return this.context.value;
 
     const data = await this.gql<{
       customer: {
@@ -228,7 +235,7 @@ export class PaasBackend implements CommerceBackend {
       payment_on_account_enabled: (data.company.payment_methods ?? []).includes("companycredit"),
       sales_rep: rep?.email ? { name: [rep.firstname, rep.lastname].filter(Boolean).join(" "), email: rep.email } : null,
     };
-    this.context = { at: Date.now(), value };
+    this.context = { at: Date.now(), email: caller.email.toLowerCase(), value };
     return value;
   }
 
@@ -259,8 +266,17 @@ export class PaasBackend implements CommerceBackend {
     return { ...fromName, ...mapped };
   }
 
+  /** Pieces per pack from the mapped `pack_size` attribute; null when it is not mapped, absent or not a whole number above 0. */
+  private packSize(p: GqlPart): number | null {
+    const code = this.opts.attributeMap?.pack_size;
+    const a = code ? p.custom_attributesV2?.items.find((i) => i.code === code) : undefined;
+    const text = a?.selected_options?.map((o) => o.label).join(" ") ?? a?.value;
+    const n = text && /^\s*\d+\s*$/.test(text) ? parseInt(text, 10) : NaN;
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+
   private summary(p: GqlPart): ProductSummary {
-    return { sku: p.sku, name: p.name ?? p.sku, attributes: this.attributes(p), pack_size: 1, uom: "each" };
+    return { sku: p.sku, name: p.name ?? p.sku, attributes: this.attributes(p), pack_size: this.packSize(p), uom: "each" };
   }
 
   private async visibleParts(skus: string[]): Promise<Map<string, GqlPart>> {
@@ -330,6 +346,21 @@ export class PaasBackend implements CommerceBackend {
 
   // ---------------------------------------------------------------- stock
 
+  /** Source codes assigned to a stock (MSI stock-source links). Per-source data is limited to these. */
+  private async stockSourceCodes(token: string, stockId: number): Promise<Set<string>> {
+    let codes = this.stockSources.get(stockId);
+    if (!codes) {
+      const res = await restGet<{ items: Array<{ source_code: string }> }>(
+        this.http,
+        `inventory/stock-source-links?searchCriteria[filterGroups][0][filters][0][field]=stock_id&searchCriteria[filterGroups][0][filters][0][value]=${stockId}&searchCriteria[pageSize]=200`,
+        token,
+      );
+      codes = new Set(res.items.map((s) => s.source_code));
+      this.stockSources.set(stockId, codes);
+    }
+    return codes;
+  }
+
   private async sourceNameMap(token: string): Promise<Map<string, string>> {
     if (!this.sourceNames) {
       const res = await restGet<{ items: Array<{ source_code: string; name: string }> }>(
@@ -342,15 +373,17 @@ export class PaasBackend implements CommerceBackend {
     return this.sourceNames;
   }
 
-  async getAvailability(caller: Caller, skus: string[], bySource: boolean): Promise<Availability[]> {
+  async getAvailability(caller: Caller, skus: string[], bySource: boolean | "lead_times"): Promise<Availability[]> {
     await this.ensureCaller(caller);
     // Visibility first, as the customer: never reveal stock for a SKU the company can't see.
     const parts = await this.visibleParts(skus);
     const inv = this.opts.inventoryToken;
     const stockId = this.opts.stockId ?? 1;
 
-    return Promise.all(
-      skus.map(async (requested): Promise<Availability> => {
+    // Source data costs two more store calls per SKU; fetch it only when it will be shown or used for lead times.
+    const wantSources = bySource === true || (bySource === "lead_times" && Object.keys(this.opts.sourceLeadTimes ?? {}).length > 0);
+    // At most a few inventory calls in flight, however many SKUs were asked for.
+    return mapLimit(skus, INVENTORY_CONCURRENCY, async (requested): Promise<Availability> => {
         const p = parts.get(requested.toLowerCase())!;
         const storefrontInStock = p.stock_status === "IN_STOCK";
         if (!inv) {
@@ -366,15 +399,16 @@ export class PaasBackend implements CommerceBackend {
         const sku = encodeURIComponent(p.sku);
         const salable = await restGet<number>(this.http, `inventory/get-product-salable-quantity/${sku}/${stockId}`, inv);
         let sources: SourceStock[] | null = null;
-        if (bySource) {
+        if (wantSources) {
           const names = await this.sourceNameMap(inv);
+          const linked = await this.stockSourceCodes(inv, stockId);
           const res = await restGet<{ items: Array<{ source_code: string; quantity: number; status: number }> }>(
             this.http,
             `inventory/source-items?searchCriteria[filterGroups][0][filters][0][field]=sku&searchCriteria[filterGroups][0][filters][0][value]=${sku}`,
             inv,
           );
           sources = res.items
-            .filter((s) => s.status === 1 && s.quantity > 0)
+            .filter((s) => linked.has(s.source_code) && s.status === 1 && s.quantity > 0)
             .map((s) => ({
               source_code: s.source_code,
               source_name: names.get(s.source_code) ?? s.source_code,
@@ -383,8 +417,7 @@ export class PaasBackend implements CommerceBackend {
             }));
         }
         return { sku: p.sku, stock_name: `stock ${stockId}`, salable_qty: salable, in_stock: salable > 0, sources };
-      }),
-    );
+    });
   }
 
   // ---------------------------------------------------------------- price
@@ -407,8 +440,12 @@ export class PaasBackend implements CommerceBackend {
     return lines.map(({ sku, qty }) => {
       const item = bySku.get(sku.toLowerCase());
       if (!item) throw new ToolError("NOT_FOUND", `No price is available for "${sku}".`);
-      const regular = item.price_range.minimum_price.regular_price.value ?? 0;
-      const final = item.price_range.minimum_price.final_price.value ?? regular;
+      const regularRaw = item.price_range.minimum_price.regular_price.value;
+      const finalRaw = item.price_range.minimum_price.final_price.value;
+      // A missing price is not a free price: refuse rather than show 0.00 in a quote preview.
+      if (regularRaw == null && finalRaw == null) throw new ToolError("NOT_FOUND", `No price is available for "${sku}".`);
+      const regular = regularRaw ?? finalRaw!;
+      const final = finalRaw ?? regular;
       const currency = item.price_range.minimum_price.final_price.currency ?? "";
       const tiers = (item.price_tiers ?? [])
         .filter((t) => t.quantity !== null && t.final_price?.value != null)
@@ -601,10 +638,21 @@ export class PaasBackend implements CommerceBackend {
 
     const items = quote.items ?? [];
     const notes = input.lines.filter((l) => l.note);
+    // The quote exists by now. A failed note must not turn into a failed call: the caller would retry and make a second quote.
+    const warnings: string[] = [];
+    const notesStarted = Date.now();
     for (const l of notes) {
+      if (Date.now() - notesStarted > NOTES_BUDGET_MS) {
+        warnings.push(`The note for ${l.sku} was not saved (took too long). The draft exists; add the note in the storefront.`);
+        continue;
+      }
       const item = items.find((i) => i.product.sku.toLowerCase() === l.sku.toLowerCase());
       if (item) {
-        await this.gql(Q.setLineItemNote, { input: { quote_uid: quote.uid, quote_item_uid: item.uid, note: l.note } });
+        try {
+          await this.gql(Q.setLineItemNote, { input: { quote_uid: quote.uid, quote_item_uid: item.uid, note: l.note } });
+        } catch {
+          warnings.push(`The note for ${l.sku} was not saved. The draft exists; add the note in the storefront.`);
+        }
       }
     }
 
@@ -628,6 +676,7 @@ export class PaasBackend implements CommerceBackend {
       lines,
       subtotal: round2(quote.prices?.subtotal_excluding_tax.value ?? round2(lines.reduce((s, l) => s + l.row_total, 0))),
       created_at: quote.created_at ?? new Date().toISOString(),
+      ...(warnings.length ? { warnings } : {}),
     };
   }
 }

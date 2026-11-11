@@ -15,6 +15,7 @@ export type ToolErrorCode =
   | "CONFIRMATION_INVALID" // token expired, tampered with, or for other input
   | "UPSTREAM_UNAVAILABLE" // commerce backend timed out / 5xx
   | "RATE_LIMITED"
+  | "RESULT_TOO_LARGE" // the answer would not fit the context budget; narrow the request
   | "INTERNAL";
 
 const RETRYABLE: Record<ToolErrorCode, boolean> = {
@@ -26,6 +27,7 @@ const RETRYABLE: Record<ToolErrorCode, boolean> = {
   CONFIRMATION_INVALID: false,
   UPSTREAM_UNAVAILABLE: true,
   RATE_LIMITED: true,
+  RESULT_TOO_LARGE: false,
   INTERNAL: false,
 };
 

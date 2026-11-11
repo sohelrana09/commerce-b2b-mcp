@@ -20,21 +20,54 @@ export class AuthExpiredError extends Error {}
 
 const log = (msg: string) => process.stderr.write(`[commerce-b2b-mcp] ${msg}\n`);
 
-async function send(opts: HttpOptions, url: string, init: RequestInit): Promise<Response> {
+/** Largest store response accepted. Catalogue and order replies are far smaller; this stops a runaway body filling memory. */
+const MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+class BodyTooLarge extends Error {}
+
+async function readCapped(res: Response): Promise<string> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      void reader.cancel().catch(() => undefined);
+      throw new BodyTooLarge();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * One store request. The timeout covers the whole exchange, response body included: a store, proxy or firewall
+ * that sends headers and then stalls cannot hang a tool call.
+ */
+async function send(opts: HttpOptions, url: string, init: RequestInit): Promise<{ res: Response; text: string }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
   const started = Date.now();
   try {
     const res = await opts.fetch(url, { ...init, signal: ctrl.signal });
+    // Reading the body from a real fetch stops when the signal aborts; the race also covers fetch implementations that ignore it.
+    const text = await Promise.race([
+      readCapped(res),
+      new Promise<never>((_, reject) => ctrl.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })))),
+    ]);
     recordUpstream(Date.now() - started, !res.ok);
-    return res;
+    return { res, text };
   } catch (err) {
     recordUpstream(Date.now() - started, true);
     const timedOut = (err as Error)?.name === "AbortError";
-    log(`${init.method ?? "GET"} ${new URL(url).pathname} ${timedOut ? "timed out" : `failed: ${String(err)}`}`);
+    const tooLarge = err instanceof BodyTooLarge;
+    log(`${init.method ?? "GET"} ${new URL(url).pathname} ${timedOut ? "timed out" : tooLarge ? "response too large" : `failed: ${String(err)}`}`);
     throw new ToolError(
       "UPSTREAM_UNAVAILABLE",
-      timedOut ? "The store did not respond in time." : "Could not reach the store.",
+      timedOut ? "The store did not respond in time." : tooLarge ? "The store's response was too large." : "Could not reach the store.",
       "Try again shortly.",
     );
   } finally {
@@ -86,12 +119,12 @@ export async function graphql<T>(
   if (token) headers.Authorization = `Bearer ${token}`;
   if (opts.storeCode) headers.Store = opts.storeCode;
 
-  const res = await send(opts, `${opts.baseUrl}/graphql`, { method: "POST", headers, body: JSON.stringify({ query, variables }) });
+  const { res, text } = await send(opts, `${opts.baseUrl}/graphql`, { method: "POST", headers, body: JSON.stringify({ query, variables }) });
   if (res.status === 401) throw new AuthExpiredError("Customer token rejected");
 
   let body: { data?: T; errors?: GraphQLError[] };
   try {
-    body = (await res.json()) as typeof body;
+    body = JSON.parse(text) as typeof body;
   } catch {
     throw res.ok ? new ToolError("INTERNAL", "The store returned a response that is not JSON.") : statusError(res, "the GraphQL API");
   }
@@ -103,7 +136,7 @@ export async function graphql<T>(
 
 export async function restGet<T>(opts: HttpOptions, path: string, token: string): Promise<T> {
   const store = opts.storeCode ? `/${encodeURIComponent(opts.storeCode)}` : "";
-  const res = await send(opts, `${opts.baseUrl}/rest${store}/V1/${path}`, {
+  const { res, text } = await send(opts, `${opts.baseUrl}/rest${store}/V1/${path}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
@@ -111,5 +144,9 @@ export async function restGet<T>(opts: HttpOptions, path: string, token: string)
     throw new ToolError("INTERNAL", "The inventory integration token was rejected. Check COMMERCE_INVENTORY_TOKEN.");
   }
   if (!res.ok) throw statusError(res, "inventory data");
-  return (await res.json()) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ToolError("INTERNAL", "The store returned a response that is not JSON.");
+  }
 }

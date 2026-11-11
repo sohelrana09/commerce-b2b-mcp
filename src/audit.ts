@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, chmodSync, statSync } from "node:fs";
 
 export interface AuditEntry {
   ts: string;
@@ -65,11 +65,24 @@ const minimise = (input: unknown, mode: AuditInputMode) => (mode === "shape" ? s
  * stdio transport and must never carry anything else.
  */
 export function createAuditSink(target: string, mode: AuditInputMode = "full"): AuditSink {
+  let checked = false;
   return {
     write(entry) {
       const line = JSON.stringify({ ...entry, input: minimise(entry.input, mode) }) + "\n";
-      if (target === "stderr") process.stderr.write(line);
-      else appendFileSync(target, line, "utf8");
+      if (target === "stderr") return void process.stderr.write(line);
+      // The log holds caller emails and tool inputs: owner-only. A new file is created 0600; an older, wider one is tightened once.
+      appendFileSync(target, line, { encoding: "utf8", mode: 0o600 });
+      if (!checked) {
+        checked = true;
+        try {
+          if (statSync(target).mode & 0o077) {
+            chmodSync(target, 0o600);
+            process.stderr.write(`[commerce-b2b-mcp] audit log ${target} was readable by others; changed to owner-only (0600)\n`);
+          }
+        } catch {
+          // Not our file to change (or not POSIX): leave it, the write itself succeeded.
+        }
+      }
     },
   };
 }

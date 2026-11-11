@@ -10,6 +10,32 @@ import { ToolError } from "./errors.js";
  * after seeing the preview invalidates it.
  */
 
+/**
+ * Remembers which confirmation tokens have been used, so one approved preview saves one draft.
+ * `claim` returns true for the first caller only. Over HTTP it is backed by the shared state store,
+ * so it holds across instances; otherwise it lives in this process.
+ */
+export interface TokenLedger {
+  claim(token: string, ttlMs: number): Promise<boolean>;
+}
+
+export function memoryLedger(now: () => number = Date.now): TokenLedger {
+  const used = new Map<string, number>();
+  return {
+    async claim(token, ttlMs) {
+      for (const [t, until] of used) if (until <= now()) used.delete(t);
+      if (used.has(token)) return false;
+      used.set(token, now() + ttlMs);
+      return true;
+    },
+  };
+}
+
+/** Milliseconds until a verified token's expiry, plus a minute of clock slack. */
+export function tokenLifetimeMs(token: string, now = Date.now()): number {
+  return Math.max(0, Number(token.split(".")[0]) * 1000 - now) + 60_000;
+}
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {

@@ -5,14 +5,20 @@ import type { z } from "zod";
 import type { AuditSink } from "../audit.js";
 import type { Caller, CommerceBackend } from "../backend/types.js";
 import type { Config, ToolName } from "../config.js";
-import { asToolError } from "../errors.js";
+import type { TokenLedger } from "../confirm.js";
+import { asToolError, ToolError } from "../errors.js";
 import { runTraced, type Trace } from "../trace.js";
+
+/** Largest tool result sent to the model: about 15k tokens. */
+export const MAX_RESULT_BYTES = 60_000;
 
 export interface ToolDeps {
   backend: CommerceBackend;
   config: Config;
   audit: AuditSink;
   caller: Caller;
+  /** Marks confirmation tokens used. Shared by every server in the process (and across instances over HTTP). */
+  ledger: TokenLedger;
 }
 
 export interface ToolSpec<Shape extends z.ZodRawShape> {
@@ -60,14 +66,23 @@ export function defineTool<Shape extends z.ZodRawShape>(server: McpServer, deps:
       let result: CallToolResult;
       let errorCode: string | undefined;
       try {
-        result = toResult(await runTraced(trace, () => spec.handler(args, deps)));
+        result = toResult(sanitizeResult(await runTraced(trace, () => spec.handler(args, deps))));
       } catch (err) {
         const te = asToolError(err);
         errorCode = te.code;
         if (te.code === "INTERNAL") process.stderr.write(`[commerce-b2b-mcp] ${spec.name} failed (trace ${trace.trace_id}): ${String(err)}\n`);
-        result = toResult(te.toJSON(), true);
+        result = toResult(sanitizeResult(te.toJSON()), true);
       }
-      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      let text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      // Last line of defence for the context budget, whatever a backend or a future tool returns.
+      if (!errorCode && Buffer.byteLength(text, "utf8") > MAX_RESULT_BYTES) {
+        errorCode = "RESULT_TOO_LARGE";
+        result = toResult(
+          new ToolError("RESULT_TOO_LARGE", "The result is too large to return.", "Ask for fewer items or a narrower search.").toJSON(),
+          true,
+        );
+        text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      }
       deps.audit.write({
         ts: new Date(started).toISOString(),
         caller: deps.caller.email,
@@ -90,8 +105,51 @@ export function defineTool<Shape extends z.ZodRawShape>(server: McpServer, deps:
   return true;
 }
 
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === "#") {
+      const code = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return "";
+      }
+    }
+    return ENTITIES[e.toLowerCase()] ?? m;
+  });
+}
+
+/**
+ * Plain text from store-authored or otherwise untrusted text: entities decoded first (so "&lt;b&gt;" cannot hide markup),
+ * tags removed (an unterminated tag is removed to the end), whitespace collapsed, control, zero-width and Unicode tag
+ * characters dropped, then capped. Pass `Infinity` to skip the cap.
+ */
+export function cleanText(raw: string, max = 300): string {
+  let s = raw;
+  for (let i = 0; i < 3; i++) {
+    const prev = s;
+    s = decodeEntities(s).replace(/<[/!a-z][^>]*>?/gi, " ");
+    if (s === prev) break;
+  }
+  s = s.replace(/\s+/g, " ").replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1).replace(/[\ud800-\udbff]$/, "") + "\u2026";
+}
+
+/** Every string in a tool result or error passes through cleanText, so store text anywhere in it is plain and bounded. */
+export function sanitizeResult(value: unknown, key = ""): unknown {
+  if (typeof value === "string") return cleanText(value, key === "text" ? 700 : 300);
+  if (Array.isArray(value)) return value.map((v) => sanitizeResult(v, key));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, sanitizeResult(v, k)]));
+  }
+  return value;
+}
+
 /** Store-authored text: strip markup, cap length, and label it as data. */
 export function merchantText(raw: string, max = 600): { source: "merchant_content"; text: string; truncated: boolean } {
-  const plain = raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const plain = cleanText(raw, Infinity);
   return { source: "merchant_content", text: plain.slice(0, max), truncated: plain.length > max };
 }

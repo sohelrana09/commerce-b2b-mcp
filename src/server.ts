@@ -4,6 +4,7 @@ import { MockBackend } from "./backend/mock/mock-backend.js";
 import { PaasBackend } from "./backend/paas/paas-backend.js";
 import type { CommerceBackend } from "./backend/types.js";
 import type { Config } from "./config.js";
+import { memoryLedger, type TokenLedger } from "./confirm.js";
 import { registerAllTools } from "./tools/index.js";
 
 export const SERVER_NAME = "commerce-b2b-mcp";
@@ -24,10 +25,10 @@ export function createBackend(config: Config): CommerceBackend {
   }
 }
 
-export function createServer(config: Config, opts: { backend?: CommerceBackend; audit?: AuditSink } = {}) {
+export function createServer(config: Config, opts: { backend?: CommerceBackend; audit?: AuditSink; ledger?: TokenLedger } = {}) {
   const backend = opts.backend ?? createBackend(config);
   const audit = opts.audit ?? createAuditSink(config.auditLog, config.auditInput);
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: INSTRUCTIONS });
-  const tools = registerAllTools(server, { backend, config, audit, caller: { email: config.callerEmail } });
+  const tools = registerAllTools(server, { backend, config, audit, caller: { email: config.callerEmail }, ledger: opts.ledger ?? memoryLedger() });
   return { server, backend, tools };
 }

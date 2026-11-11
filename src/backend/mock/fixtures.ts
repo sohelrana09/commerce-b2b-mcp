@@ -265,6 +265,11 @@ export const SOURCES = [
   { code: "supplier-dropship", name: "Supplier Direct", lead_time_days: 7 },
 ];
 
+/** stock_id -> the source codes assigned to that stock (MSI stock-source links). Only these count for a company on the stock. */
+export const STOCK_SOURCES: Record<string, string[]> = {
+  "stock-uk": ["leeds", "bristol", "supplier-dropship"],
+};
+
 /** source_code -> sku -> on-hand qty */
 const DEMO_SOURCE_ITEMS: Record<string, Record<string, number>> = {
   leeds: { "HXB-M8-30-A2": 4200, "HXB-M8-30-A4": 800, "HXB-M10-50-88Z": 12000, "NUT-M8-A4": 9000, "WSH-M8-A4": 15000, "ROD-M10-1000-Z": 140 },

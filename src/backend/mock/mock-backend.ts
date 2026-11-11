@@ -126,12 +126,14 @@ export class MockBackend implements CommerceBackend {
     return { ...this.summary(p), description: p.description, type: variants.length ? "configurable" : "simple", variants };
   }
 
-  async getAvailability(caller: Caller, skus: string[], bySource: boolean): Promise<Availability[]> {
+  async getAvailability(caller: Caller, skus: string[], bySource: boolean | "lead_times"): Promise<Availability[]> {
     const r = this.resolve(caller);
     this.require(r, "catalog.view");
     return skus.map((sku) => {
       const p = this.visible(r, sku);
-      const sources = F.SOURCES.map((s) => ({
+      // Only the sources assigned to the company's stock: other warehouses are not theirs to see or count.
+      const linked = F.STOCK_SOURCES[r.company.stock_id] ?? [];
+      const sources = F.SOURCES.filter((s) => linked.includes(s.code)).map((s) => ({
         source_code: s.code,
         source_name: s.name,
         quantity: F.SOURCE_ITEMS[s.code]?.[p.sku] ?? 0,

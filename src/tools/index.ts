@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Availability } from "../backend/types.js";
-import { issueToken, verifyToken } from "../confirm.js";
+import { issueToken, tokenLifetimeMs, verifyToken } from "../confirm.js";
 import { ToolError } from "../errors.js";
 import { parseFastenerText, scorePart } from "../normalize.js";
 import { defineTool, merchantText, type ToolDeps } from "./define.js";
@@ -17,12 +17,19 @@ const filters = z
     part_type: z.enum(["bolt", "screw", "nut", "washer", "threaded_rod"]).optional(),
     head: z.enum(["hex", "socket_cap", "countersunk", "pan"]).optional(),
     thread: z.string().regex(/^M\d+(\.\d+)?$/, "Use metric thread like M8").optional(),
-    length_mm: z.number().positive().optional(),
+    length_mm: z.number().positive().max(10_000).optional().describe("Length in millimetres"),
     material: material.optional(),
-    grade: z.string().max(10).optional(),
+    grade: z.string().regex(/^[A-Za-z0-9.\-]{1,10}$/, "Property class such as 8.8 or A4-80").optional(),
     finish: z.enum(["plain", "zinc", "hot_dip_galvanised"]).optional(),
   })
   .strict();
+
+/** Longest lists a tool returns. Past these, the result says how many there are and the model narrows the request. */
+export const LIMITS = { variants: 20, order_lines: 50, list_items: 100, tiers: 10 } as const;
+
+function capped<T>(items: T[], max: number, name: string): Record<string, unknown> {
+  return items.length > max ? { [`${name}_total`]: items.length, [`${name}_truncated`]: true } : {};
+}
 
 function leadTimeMessage(a: Availability, needed: number | undefined): string {
   if (!a.in_stock) return "Out of stock. Ask the sales rep for a restock date.";
@@ -35,6 +42,10 @@ function leadTimeMessage(a: Availability, needed: number | undefined): string {
     return `Only ${a.salable_qty} salable; short by ${needed - a.salable_qty}.${ships}`;
   }
   return `In stock.${ships}`;
+}
+
+function cappedList<L extends { items: unknown[] }>(list: L) {
+  return { ...list, items: list.items.slice(0, LIMITS.list_items), ...capped(list.items, LIMITS.list_items, "items") };
 }
 
 export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
@@ -98,7 +109,13 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
       annotations: READ,
       handler: async ({ sku }, { backend, caller }) => {
         const p = await backend.getProduct(caller, sku);
-        return { ...p, description: merchantText(p.description) };
+        return {
+          ...p,
+          description: merchantText(p.description),
+          variants: p.variants.slice(0, LIMITS.variants),
+          ...capped(p.variants, LIMITS.variants, "variants"),
+          ...(p.variants.length > LIMITS.variants ? { variants_hint: "Many variants: use search_parts with the size you need." } : {}),
+        };
       },
     }),
     "get_product",
@@ -118,7 +135,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
       },
       annotations: READ,
       handler: async ({ skus, qty_needed, by_source }, { backend, caller }) => {
-        const rows = await backend.getAvailability(caller, skus, true);
+        // Lead-time text needs the sources, but only when the store has lead times set; listing them is up to by_source.
+        const rows = await backend.getAvailability(caller, skus, by_source ? true : "lead_times");
         return {
           items: rows.map((a) => {
             const needed = qty_needed?.[a.sku];
@@ -151,7 +169,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
       handler: async ({ lines }, { backend, caller }) => {
         const prices = await backend.getCustomerPrices(caller, lines);
         const total = Math.round(prices.reduce((s, p) => s + p.line_total, 0) * 100) / 100;
-        return { currency: prices[0]?.currency, lines: prices, subtotal: total };
+        return { currency: prices[0]?.currency, lines: prices.map((p) => ({ ...p, tiers: p.tiers.slice(0, LIMITS.tiers) })), subtotal: total };
       },
     }),
     "get_customer_price",
@@ -179,7 +197,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
         "Orders for the buyer's company, newest first, paginated. Users without company-wide order permission only see their own orders.",
       input: {
         status: z.enum(["pending", "processing", "complete", "canceled", "holded"]).optional(),
-        page: z.number().int().min(1).default(1),
+        page: z.number().int().min(1).max(10_000).default(1),
         page_size: z.number().int().min(1).max(pageMax).default(10),
       },
       annotations: READ,
@@ -196,7 +214,10 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
       description: "Status, lines with shipped quantities, and tracking for one order belonging to the buyer's company.",
       input: { order_number: z.string().trim().regex(/^\d{6,12}$/, "Order numbers are digits, e.g. 000104512") },
       annotations: READ,
-      handler: async ({ order_number }, { backend, caller }) => backend.getOrder(caller, order_number),
+      handler: async ({ order_number }, { backend, caller }) => {
+        const o = await backend.getOrder(caller, order_number);
+        return { ...o, lines: o.lines.slice(0, LIMITS.order_lines), ...capped(o.lines, LIMITS.order_lines, "lines") };
+      },
     }),
     "get_order_status",
   );
@@ -210,7 +231,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
       input: { list_id: z.string().trim().max(64).optional() },
       annotations: READ,
       handler: async ({ list_id }, { backend, caller }) =>
-        list_id ? backend.getRequisitionList(caller, list_id) : { lists: await backend.listRequisitionLists(caller) },
+        list_id ? cappedList(await backend.getRequisitionList(caller, list_id)) : { lists: await backend.listRequisitionLists(caller) },
     }),
     "read_requisition_list",
   );
@@ -234,7 +255,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
         confirmation_token: z.string().max(200).optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      handler: async ({ confirmation_token, ...input }, { backend, caller, config }) => {
+      handler: async ({ confirmation_token, ...input }, { backend, caller, config, ledger }) => {
         const ctx = await backend.getCompanyContext(caller);
         if (!ctx.permissions.includes("quotes.create")) {
           throw new ToolError("FORBIDDEN", "Your company role does not allow creating quotes (quotes.create).");
@@ -274,6 +295,14 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
         }
 
         verifyToken(config.confirmSecret, confirmation_token, "draft_negotiable_quote", caller.email, tokenInput);
+        // One approved preview saves one draft. Claimed before the store is called, so two parallel confirms cannot both run.
+        if (!(await ledger.claim(confirmation_token, tokenLifetimeMs(confirmation_token)))) {
+          throw new ToolError(
+            "CONFIRMATION_INVALID",
+            "This confirmation token has already been used.",
+            "If you are unsure whether the draft was saved, check the storefront before asking for a new preview.",
+          );
+        }
         const quote = await backend.createDraftQuote(caller, input);
         if (quote.status !== "draft") {
           return {
@@ -285,6 +314,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
         return {
           status: "draft_saved",
           quote,
+          ...(quote.warnings?.length ? { warnings: quote.warnings } : {}),
           next_step: "The quote is saved as a draft. A person must review and submit it to the seller in the storefront.",
         };
       },

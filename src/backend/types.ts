@@ -58,7 +58,8 @@ export interface ProductSummary {
   sku: string;
   name: string;
   attributes: PartAttributes;
-  pack_size: number;
+  /** Pieces per pack, or null when the store does not say. Never guessed. */
+  pack_size: number | null;
   uom: string;
 }
 
@@ -155,6 +156,8 @@ export interface QuoteDraft {
   lines: Array<{ sku: string; name: string; qty: number; unit_price: number; row_total: number; note: string | null }>;
   subtotal: number;
   created_at: string;
+  /** Things that did not go to plan after the quote existed, e.g. a line note that was not saved. */
+  warnings?: string[];
 }
 
 export interface Page<T> {
@@ -170,7 +173,11 @@ export interface CommerceBackend {
   getCompanyContext(caller: Caller): Promise<CompanyContext>;
   searchParts(caller: Caller, query: SearchQuery): Promise<ProductSummary[]>;
   getProduct(caller: Caller, sku: string): Promise<ProductDetail>;
-  getAvailability(caller: Caller, skus: string[], bySource: boolean): Promise<Availability[]>;
+  /**
+   * `bySource`: true = always include per-source stock; false = never; "lead_times" = only when the store has lead times
+   * configured (they are the only thing the sources are needed for then). Backends may skip store calls they do not need.
+   */
+  getAvailability(caller: Caller, skus: string[], bySource: boolean | "lead_times"): Promise<Availability[]>;
   getCustomerPrices(caller: Caller, lines: Array<{ sku: string; qty: number }>): Promise<CustomerPrice[]>;
   listOrders(caller: Caller, opts: { page: number; pageSize: number; status?: OrderStatus }): Promise<Page<OrderSummary>>;
   getOrder(caller: Caller, orderNumber: string): Promise<OrderDetail>;
