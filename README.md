@@ -52,6 +52,8 @@ It covers the B2B layer that generic Magento MCP servers leave out: company acco
 
 ## See it in one command
 
+![The demo: an emailed RFQ, the assistant's review with 8 ready lines and 3 flagged for a person, then the draft quote preview](docs/images/demo.gif)
+
 No store and no API key are needed, and nothing is saved. You need Node 20+:
 
 ```bash
@@ -70,24 +72,12 @@ docker run --rm commerce-b2b-mcp demo
 The demo starts the MCP server inside the same process, against the mock store, acting as a buyer at *Harbour Marine Engineering*. A sample RFQ then goes through the [quote assistant](#rfq-quote-assistant) in three steps:
 
 1. **An RFQ arrives:** 11 lines of bolts, nuts and washers written the way customers write them ("M 10 nyloc nut BZP - 3k").
-2. **The assistant reads it:** it matches each line to a product, then checks stock and the company's price. 8 lines are ready, and 3 are flagged with the reason and the alternatives:
-
-   ```
-   11 lines · 8 ready · 3 need review · ready subtotal GBP 3161.00
-
-   | # | Customer wrote                           | Qty  | Match             | Unit price | Status |
-   | 1 | 1. M8x30 A4 hex setcrew - 2,000 off      | 2000 | HF-HSS-M8-30-A4   | GBP 0.28   | ready  |
-   | 7 | 7. M 10 nyloc nut BZP - 3k               | 3000 | HF-NYL-M10-88Z    | GBP 0.11   | ready  |
-   | 9 | 9. M8x25 SS hex setscrew - 1,000 off     | 1000 | HF-HSS-M8-25-A2   | GBP 0.20   | review |
-   |10 | 10. M10 hex bolts 8.8 zinc - 500 off     |  500 | —                 | —          | review |
-
-   Line 9:  2 parts fit what was written equally well (A2 or A4 stainless). The RFQ does not say which.
-   Line 10: No length stated. Thread and length must be confirmed, never assumed.
-   ```
-
+2. **The assistant reads it:** it matches each line to a product, then checks stock and the company's price. 8 lines are ready, and 3 are flagged with the reason and the alternatives.
 3. **A draft quote is proposed:** the ready lines become a draft negotiable quote preview. It is not saved: saving needs the confirmation token and a person's approval.
 
 To run it on your own RFQ (`.txt`, `.eml` or `.csv`), add `--rfq my-rfq.txt`. From a clone, `npm run demo` does the same. The demo uses the free rule-based intake. [Claude intake](#evals) reads more kinds of RFQ but needs an API key.
+
+The animation is recorded from the real demo with [VHS](https://github.com/charmbracelet/vhs): `vhs docs/demo.tape` rebuilds it.
 
 ## Who it is for
 
@@ -557,7 +547,7 @@ Done:
   - service targets (cost, latency, quality), checked by every eval run;
   - a data-handling note, a minimised audit mode, and `rfq-quote forget` for erasure and retention;
   - team setup for Claude Code;
-  - a one-command demo with `npx` and Docker;
+  - a one-command demo with `npx` and Docker, and a recorded demo GIF;
   - a shared, encrypted Redis store for sign-in state, so the HTTP server can run as several instances;
   - a stateless HTTP mode, so any instance or a serverless function can answer any request.
 
@@ -568,7 +558,6 @@ Next:
 - [ ] Golden set from a merchant's real past quotes (with permission), and catalogue attributes for pitch and nut style
 - [ ] Test with an inventory integration token (MSI salable qty, per-source stock)
 - [ ] Parser evals on real catalogue names (e.g. "Screw Gudgeon" is read as a screw)
-- [ ] Demo GIF
 
 Ideas and pull requests are welcome, see [Contributing](#contributing).
 

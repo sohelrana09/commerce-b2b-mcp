@@ -4,8 +4,8 @@ import { HeuristicExtractor } from "./assistant/extract/heuristic.js";
 import { loadRfq } from "./assistant/extract/input.js";
 import type { RfqDocument } from "./assistant/extract/schema.js";
 import { inProcessTools } from "./assistant/in-process.js";
-import { draftInput, reviewRfq } from "./assistant/pipeline.js";
-import { renderReview } from "./assistant/report.js";
+import { draftInput, reviewRfq, type QuoteReview } from "./assistant/pipeline.js";
+import { cleanText } from "./tools/define.js";
 
 /**
  * `commerce-b2b-mcp demo`: the whole RFQ-to-draft-quote flow in one command,
@@ -48,8 +48,46 @@ Everything runs against the built-in mock store. Nothing is saved and nothing is
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
 const bold = (s: string) => (tty ? `\x1b[1m${s}\x1b[0m` : s);
 const dim = (s: string) => (tty ? `\x1b[2m${s}\x1b[0m` : s);
+const green = (s: string) => (tty ? `\x1b[32m${s}\x1b[0m` : s);
+const yellow = (s: string) => (tty ? `\x1b[33m${s}\x1b[0m` : s);
 const step = (n: number, title: string) => console.log(`\n${bold(`Step ${n} of 3 · ${title}`)}\n`);
-const indent = (s: string) => s.split("\n").map((l) => `    ${l}`).join("\n");
+/** RFQ text is untrusted: drop control characters (escape sequences could rewrite the terminal), keep the line breaks. */
+const indent = (s: string) => s.split("\n").map((l) => `    ${l.replace(/[\p{Cc}\p{Cf}]/gu, "")}`).join("\n");
+const fit = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}\u2026` : s.padEnd(n));
+
+/**
+ * The review sheet laid out for a terminal. The assistant's own report
+ * (`rfq-quote review --out`) is Markdown for a rep's editor; here the same
+ * facts are aligned columns. Customer text goes through cleanText, which
+ * strips markup and control characters.
+ */
+function renderForTerminal(r: QuoteReview): string {
+  const cur = r.totals.currency ?? "";
+  const out: string[] = [];
+  out.push(
+    `    ${r.lines.length} lines: ${green(`${r.totals.ready_lines} ready`)}, ${yellow(`${r.totals.review_lines} need review`)}. Ready subtotal ${cur} ${r.totals.ready_subtotal.toFixed(2)}`,
+  );
+  for (const s of r.extraction.suspicious_instructions) out.push(`    ${yellow("Ignored instruction in the RFQ:")} "${cleanText(s, 120)}"`);
+  out.push("");
+  out.push(dim(`    ${"#".padStart(2)}  ${"Customer wrote".padEnd(44)} ${"Qty".padStart(6)}  ${"Match".padEnd(20)} ${"Unit".padStart(6)} ${"Total".padStart(9)}  Status`));
+  for (const l of r.lines) {
+    const status = l.status === "ready" ? green("ready") : yellow("review");
+    out.push(
+      `    ${String(l.index + 1).padStart(2)}  ${fit(cleanText(l.line.raw_text, 200), 44)} ${String(l.qty_each).padStart(6)}  ${fit(l.match?.sku ?? "-", 20)} ${(l.price ? l.price.unit_price.toFixed(2) : "-").padStart(6)} ${(l.price ? l.price.line_total.toFixed(2) : "-").padStart(9)}  ${status}`,
+    );
+  }
+  const flagged = r.lines.filter((l) => l.status === "review");
+  if (flagged.length) {
+    out.push("");
+    out.push(bold("    What a person must check"));
+    for (const l of flagged) {
+      out.push(`    ${yellow(`Line ${l.index + 1}`)}  "${cleanText(l.line.raw_text, 80)}"`);
+      for (const f of l.flags) out.push(`      ${cleanText(f.message, 160)}`);
+      if (l.alternatives.length) out.push(dim(`      Options: ${l.alternatives.map((a) => a.sku).join(", ")}`));
+    }
+  }
+  return out.join("\n");
+}
 
 export async function runDemo(args: string[]): Promise<void> {
   const { values } = parseArgs({ args, options: { rfq: { type: "string" }, help: { type: "boolean", short: "h" } } });
@@ -72,7 +110,7 @@ export async function runDemo(args: string[]): Promise<void> {
   const tools = await inProcessTools();
   try {
     const review = await reviewRfq(doc, new HeuristicExtractor(), tools);
-    console.log(renderReview(review));
+    console.log(renderForTerminal(review));
 
     step(3, "A draft negotiable quote is proposed for a person to approve");
     const input = draftInput(review, { name: `Demo quote ${review.extraction.rfq_reference ?? (values.rfq ? doc.name : "HM-DEMO-01")}` });
@@ -82,14 +120,14 @@ export async function runDemo(args: string[]): Promise<void> {
       const preview = await tools.call("draft_negotiable_quote", input);
       if (preview.isError) throw new Error(preview.data?.error?.message ?? "The draft preview failed.");
       const p = preview.data.preview;
-      console.log(`Draft "${p.name}" for ${preview.data.company}, ready lines only:\n`);
-      for (const l of p.lines) console.log(`    ${l.sku.padEnd(24)} ${String(l.qty).padStart(7)} x ${l.unit_price.toFixed(3)} = ${l.row_total.toFixed(2)}`);
-      console.log(`\n    Subtotal ${p.currency} ${p.subtotal.toFixed(2)}`);
-      for (const w of preview.data.warnings ?? []) console.log(`    Warning: ${w}`);
+      console.log(`    Draft "${cleanText(p.name, 80)}" for ${preview.data.company}, ready lines only:\n`);
+      for (const l of p.lines) console.log(`    ${l.sku.padEnd(20)} ${String(l.qty).padStart(6)} x ${l.unit_price.toFixed(3)} = ${l.row_total.toFixed(2).padStart(8)}`);
+      console.log(`    ${"".padEnd(20)} ${"".padStart(6)}   ${"Subtotal".padStart(5)} ${bold(`${p.currency} ${p.subtotal.toFixed(2)}`)}`);
+      for (const w of preview.data.warnings ?? []) console.log(`    ${yellow("Warning:")} ${w}`);
       console.log(
-        `\n${dim("Not saved. This is the preview step: the tool returns a confirmation token, and only a call that")}` +
-          `\n${dim("repeats the same input with that token saves anything, and then only as a DRAFT the customer")}` +
-          `\n${dim("never sees. Flagged lines stay out until a rep resolves them.")}`,
+        `\n${dim("    Not saved. The tool returned a preview and a confirmation token. Only a second call with that")}` +
+          `\n${dim("    token saves anything, and then only as a DRAFT the customer never sees. Flagged lines stay out")}` +
+          `\n${dim("    until a person resolves them.")}`,
       );
     }
   } finally {
@@ -98,7 +136,7 @@ export async function runDemo(args: string[]): Promise<void> {
 
   console.log(`\n${bold("Next")}
   Review your own RFQ:   npx -y github:sohelrana09/commerce-b2b-mcp demo --rfq my-rfq.txt
-  Use it from Claude:    add the server to your MCP client, see the README ("Try it in 2 minutes")
+  Use it from Claude:    add the server to your MCP client, see the README ("Quick start")
   Claude intake:         rfq-quote review <file> with ANTHROPIC_API_KEY set (finds more lines; paid)
   Remote server:         the README's Docker section runs the server over HTTP with OAuth sign-in`);
 }
