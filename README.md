@@ -239,7 +239,13 @@ What limits matching is the real catalogue's naming, not the RFQ:
 - Fine-pitch "M10 x 1.0" nuts sit beside coarse ones, with no pitch attribute to tell them apart.
 - Anchors share "M8x30" names with screws.
 
-The fix is catalogue attributes (pitch, nut style, product family) mapped through `COMMERCE_ATTRIBUTE_MAP`, not more prompt.
+The best fix is catalogue attributes (pitch, nut style, product family) mapped through `COMMERCE_ATTRIBUTE_MAP`, not more prompt. Until a store has them, the name parser reads what names do say, and leaves a value empty rather than guess:
+- **Pitch:** "M10 x 1.0" and "M8-1.25 x 30" are read as pitch, not length. A pitch that isn't the standard coarse one has to match on both sides, so a fine-pitch nut never stands in for a plain one, or the other way round.
+- **Things that aren't a plain bolt, screw or nut get no part type:** anchors, rivet nuts, inserts, gudgeons, eye, U, coach and carriage bolts, screw cups. A "Screw Gudgeon" no longer counts as a screw.
+- **Modifiers and trade abbreviations:** a washer head screw is a screw, a nylon insert nut is a nyloc nut (not a nylon part), and "Skt", "Scr", "C/Sunk" and "H/T" are read.
+- **Tools and chemicals sold beside fasteners** (spanners, keys, taps, threadlock) are not read as fasteners, so "Spanner 13mm" is not a 13 mm part.
+
+The cases are in `test/normalize.test.ts`, written in catalogue style with invented names. The golden-set results did not change.
 
 ## Safety model
 
@@ -549,15 +555,15 @@ Done:
   - team setup for Claude Code;
   - a one-command demo with `npx` and Docker, and a recorded demo GIF;
   - a shared, encrypted Redis store for sign-in state, so the HTTP server can run as several instances;
-  - a stateless HTTP mode, so any instance or a serverless function can answer any request.
+  - a stateless HTTP mode, so any instance or a serverless function can answer any request;
+  - parser tests on catalogue-style names: pitch, out-of-range items, trade abbreviations and tools.
 
 Next:
 - [ ] Run the effort and model sweep (built: `npm run eval -- --sweep`)
 - [ ] ACCS adapter with Adobe IMS; confirm which B2B APIs ACCS exposes before claiming parity
 - [ ] App Builder / I/O Runtime packaging and deployment guide (the stateless HTTP mode it needs is built)
-- [ ] Golden set from a merchant's real past quotes (with permission), and catalogue attributes for pitch and nut style
+- [ ] Golden set from a merchant's real past quotes (with permission), and catalogue attributes for nut style and product family
 - [ ] Test with an inventory integration token (MSI salable qty, per-source stock)
-- [ ] Parser evals on real catalogue names (e.g. "Screw Gudgeon" is read as a screw)
 
 Ideas and pull requests are welcome, see [Contributing](#contributing).
 

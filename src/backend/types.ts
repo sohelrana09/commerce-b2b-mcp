@@ -52,6 +52,8 @@ export interface PartAttributes {
   grade: string | null; // "8.8", "A4-70", ...
   finish: "plain" | "zinc" | "hot_dip_galvanised" | null;
   standard: string | null; // "ISO 4017"
+  /** Thread pitch in mm when the catalogue states one. Absent or null means the coarse (standard) pitch. */
+  pitch?: number | null;
 }
 
 export interface ProductSummary {

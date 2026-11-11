@@ -163,6 +163,8 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 
 **Consequences.** Match quality depends on the merchant's product data. That is a discovery question for every deployment, and a finding worth showing the merchant.
 
+**Update.** Names still carry some facts reliably, so the name parser now reads them, under one rule: when a name does not say what a part is, the value stays empty. Pitch is read apart from length ("M10 x 1.0"), and a non-coarse pitch must match on both sides. Names that contain "bolt", "screw" or "nut" without being one (anchors, rivet nuts, inserts, gudgeons, special bolts) get no part type, and tools sold beside fasteners are not read as fasteners. Nut style and product family still need catalogue attributes.
+
 ### 18. Minimise customer data, and make deletion a command
 
 **Context.** RFQs carry personal data (names, emails, phone numbers, signatures). It can end up in five places: the Claude API, run files, the corrections log, the audit log and Magento. The corrections log is meant to grow the eval set, so customer text could become test data.
