@@ -26,7 +26,7 @@ npm run demo
    - a zod input schema with descriptions;
    - a test in `test/tools.test.ts` against the mock store;
    - if it writes, the propose-then-approve confirmation token used by `draft_negotiable_quote`.
-4. Run the checks. CI runs both on Node 20, 22 and 24:
+4. Run the checks. CI runs both on Node 20, 22, 24 and 26:
 
    ```bash
    npm run typecheck

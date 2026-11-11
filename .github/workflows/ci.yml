@@ -11,7 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [20, 22, 24]
+        # 20 is the oldest supported; 26 is what the Docker image runs.
+        node: [20, 22, 24, 26]
     # A disposable Redis for the shared state store tests (they are skipped without it).
     services:
       redis:
@@ -38,3 +39,36 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # The image is what people run from the README, so build it and use it the same way.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build -t commerce-b2b-mcp:ci .
+      - name: The demo runs with no key and no store
+        run: |
+          out=$(docker run --rm commerce-b2b-mcp:ci demo)
+          echo "$out" | tail -n 25
+          echo "$out" | grep -q "8 ready, 3 need review"
+          echo "$out" | grep -q "Subtotal GBP 3161.00"
+      - name: The image runs as a non-root user
+        run: test "$(docker run --rm --entrypoint id commerce-b2b-mcp:ci -u)" != "0"
+      - name: The HTTP server refuses to start without a demo password
+        run: |
+          if docker run --rm commerce-b2b-mcp:ci 2>err.txt; then echo "started without COMMERCE_MOCK_PASSWORD"; exit 1; fi
+          grep -q COMMERCE_MOCK_PASSWORD err.txt
+      - name: The HTTP server answers health checks and asks for OAuth
+        run: |
+          docker run -d --name mcp -p 8080:8080 -e COMMERCE_MOCK_PASSWORD=ci-demo-password-123 commerce-b2b-mcp:ci
+          for i in $(seq 1 30); do curl -sf http://localhost:8080/healthz && break; sleep 1; done
+          curl -sf http://localhost:8080/healthz | grep -q '"ok":true'
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/mcp -H 'content-type: application/json' -d '{}')
+          test "$status" = "401"
+          curl -sf http://localhost:8080/.well-known/oauth-protected-resource/mcp | grep -q '"resource":"http://localhost:8080/mcp"'
+      - name: Server log
+        if: always()
+        run: docker logs mcp 2>&1 | tail -n 20 || true

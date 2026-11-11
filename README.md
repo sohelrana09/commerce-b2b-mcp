@@ -605,7 +605,7 @@ Bug fixes, new B2B tools, adapters and better evals are all welcome. For larger 
    - the golden-set safety gate stays at zero.
 
    A new tool needs a zod input schema with descriptions and a test against the mock store. If it writes, it also needs the propose-then-approve confirmation token.
-3. Run the checks: `npm run typecheck && npm test`. CI runs both on Node 20, 22 and 24.
+3. Run the checks: `npm run typecheck && npm test`. CI runs both on Node 20, 22, 24 and 26.
 4. Open a pull request that says what changed and how you tested it. A significant design choice gets an ADR in [docs/decisions.md](docs/decisions.md).
 
 Working with Claude Code: [`.claude/settings.json`](.claude/settings.json) shares the team's permissions, and a hook typechecks after every TypeScript edit. Onboarding, shared and personal settings, and the review checklist are in [docs/team-setup.md](docs/team-setup.md).

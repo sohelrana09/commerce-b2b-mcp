@@ -16,7 +16,7 @@ MCP server for Adobe Commerce B2B (company users, negotiable quotes) plus an RFQ
 | `npm run eval -- --sweep ...` | Several Claude settings in parallel | **Paid, several times over** |
 | `rfq-quote review <file>` | Defaults to Claude intake; pass `--extractor heuristic` for free | **Paid by default** |
 
-Before finishing any change: `npm run typecheck && npm test`. CI runs both on Node 20, 22 and 24.
+Before finishing any change: `npm run typecheck && npm test`. CI runs both on Node 20, 22, 24 and 26.
 
 ## Layout
 

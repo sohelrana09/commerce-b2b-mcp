@@ -53,7 +53,7 @@ These rules reduce mistakes; they are not a security boundary. A determined shel
 
 ## Reviewing a pull request
 
-Every PR needs one human approval. CI must pass on Node 20, 22 and 24 (`npm ci`, typecheck, test, build); the test run includes the golden-set safety gate, so a change that marks a wrong line ready cannot merge.
+Every PR needs one human approval. CI must pass on Node 20, 22, 24 and 26 (`npm ci`, typecheck, test, build), and the Docker image must build and pass its smoke test; the test run includes the golden-set safety gate, so a change that marks a wrong line ready cannot merge.
 
 Use Claude Code to prepare the review, then decide yourself:
 
