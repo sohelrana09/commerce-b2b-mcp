@@ -25,7 +25,7 @@ It covers the B2B layer that generic Magento MCP servers leave out: company acco
 - **Nine B2B tools:** company context and credit, attribute-aware part search, product detail, MSI availability, company price, orders, order status, requisition lists, and draft negotiable quotes.
 - **Propose, then approve:** the one write tool returns a priced preview and a signed confirmation token. It saves only a draft quote, and never submits it.
 - **RFQ quote assistant:** turns a customer's emailed or CSV request for quote into a priced review sheet, flags every line a person must check, then drafts the quote. A 151-line golden set guards it, and its safety number ("wrong lines marked ready") is held at 0.
-- **Local or hosted:** stdio for one user on their own machine, or Streamable HTTP with OAuth where each access token is one company user. Every call is audited and traced.
+- **Local or hosted:** stdio for one user on their own machine, or Streamable HTTP with OAuth where each access token is one company user, on one instance or several sharing an encrypted Redis store. Every call is audited and traced.
 - **Verified on a real store:** Adobe Commerce 2.4.8-p5 with B2B 1.5.2-p3, on a copy of a production fastener catalogue (~17,000 products).
 
 > **Status: v0.4.** Mock mode and an Adobe Commerce PaaS adapter (2.4.7+ with B2B). v0.3 added the [RFQ quote assistant](#rfq-quote-assistant) with a golden eval set. v0.4 adds a [remote transport](#remote-transport-streamable-http--oauth) (Streamable HTTP with OAuth, one company user per token) and per-call tracing. Adobe Commerce as a Cloud Service (ACCS) is next.
@@ -402,11 +402,32 @@ How it works:
 | `COMMERCE_HTTP_TOKEN_TTL_SECONDS` | `3600` | Access token lifetime, capped at 3600 |
 | `COMMERCE_OAUTH_REDIRECT_HOSTS` | none | Extra https redirect hosts, e.g. `claude.ai` |
 | `COMMERCE_MOCK_PASSWORD` | none | Mock backend only: the demo users' password (12+ characters) |
+| `COMMERCE_STATE_STORE` | `memory` | `memory` (one instance) or `redis` (shared by several) |
+| `COMMERCE_REDIS_URL` | none | Redis only: `rediss://` address, with the password in it |
+| `COMMERCE_STATE_KEY` | none | Redis only: 32+ characters, the same on every instance. Encrypts what is stored |
+| `COMMERCE_REDIS_PREFIX` | `commerce-b2b-mcp:` | Redis only: key prefix, so one Redis can serve several deployments |
 
 Over HTTP, `COMMERCE_CALLER_EMAIL`, `COMMERCE_CUSTOMER_TOKEN` and `COMMERCE_CUSTOMER_PASSWORD` must be unset. A fixed identity shared by every client is exactly what this mode exists to avoid.
 
+### Several instances
+
+By default, sign-in state is in the server's memory, so it runs as one instance. To run several behind one public URL, for failover or rolling deploys, share the state in Redis:
+
+```bash
+COMMERCE_STATE_STORE=redis
+COMMERCE_REDIS_URL='rediss://:redis-password@redis.example.com:6380'
+COMMERCE_STATE_KEY='32+ random characters, the same on every instance'
+```
+
+- **Any instance can serve any step.** A client can register on one instance, sign in on another and call `/mcp` on a third. Sign-in failures are counted across all of them.
+- **Revocation and expiry reach every instance.** A revoked token is refused everywhere at once. Each instance closes its own sessions for that grant within a minute, and each expired grant is signed out at the store by exactly one instance.
+- **Redis holds no readable secrets.** Every value is encrypted with AES-256-GCM, and every key is a hash of the real id. Changing `COMMERCE_STATE_KEY` signs everyone out.
+- **Sessions stay where they started.** Route by the `Mcp-Session-Id` header (sticky sessions). Without that, a request that lands on another instance gets 404 and the client opens a new session.
+
+The server checks it can reach Redis before it starts listening. Use `rediss://`: with plain `redis://` to a remote host it starts, but warns that the Redis password crosses the network in clear. The design is [decision 19](docs/decisions.md#19-shared-sign-in-state-in-redis-encrypted-for-more-than-one-instance).
+
 **Limits.**
-- **One instance only.** Clients, codes and tokens are kept in memory, and a restart signs everyone out. Several instances, or App Builder, need a shared token store.
+- **One instance by default.** Clients, codes and tokens are kept in memory, and a restart signs everyone out. To run several instances, use the [shared Redis store](#several-instances). App Builder also needs a stateless HTTP mode, which is still to do.
 - **TLS.** Put TLS in front (a reverse proxy) for anything beyond localhost.
 - **Proxies.** Behind a proxy, the sign-in lockout counts per proxy address until trusted proxy headers are configured.
 - **Short store tokens.** If the store's customer token lifetime is shorter than the access token's, tools return `FORBIDDEN` with a hint to sign in again.
@@ -516,12 +537,12 @@ Done:
   - service targets (cost, latency, quality), checked by every eval run;
   - a data-handling note, a minimised audit mode, and `rfq-quote forget` for erasure and retention;
   - team setup for Claude Code;
-  - a one-command demo with `npx` and Docker.
+  - a one-command demo with `npx` and Docker;
+  - a shared, encrypted Redis store for sign-in state, so the HTTP server can run as several instances.
 
 Next:
 - [ ] Run the effort and model sweep (built: `npm run eval -- --sweep`)
 - [ ] ACCS adapter with Adobe IMS; confirm which B2B APIs ACCS exposes before claiming parity
-- [ ] Shared token store for more than one instance
 - [ ] App Builder / I/O Runtime deployment in stateless HTTP mode
 - [ ] Golden set from a merchant's real past quotes (with permission), and catalogue attributes for pitch and nut style
 - [ ] Test with an inventory integration token (MSI salable qty, per-source stock)
@@ -554,7 +575,7 @@ The tools, scoping, quote flow, OAuth and audit work for any B2B catalogue. The 
 It is a reference build with security in mind. Before going live:
 - run it over HTTP behind TLS;
 - set `COMMERCE_CONFIRM_SECRET` and `COMMERCE_AUDIT_INPUT=shape`;
-- keep to one instance until there is a shared token store;
+- run one instance, or several with the [shared Redis store](#several-instances) and sticky sessions;
 - measure the quote assistant on your own past quotes before you trust its "ready" lines.
 
 ## Contributing

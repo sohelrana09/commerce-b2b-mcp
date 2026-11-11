@@ -16,11 +16,11 @@ An RFQ is a business email or file, but it usually carries **personal data**: th
 | 4 | Rep corrections: RFQ line text, chosen SKU, rep note, RFQ file name | `evals/corrections.jsonl` (or `--log`) | Merchant | Until deleted | `rfq-quote forget --document <name>` or `--older-than <days>` |
 | 5 | Audit log: caller email, company ID, tool, tool input, outcome, timings, trace ID; over HTTP also the session and OAuth client | stderr or `COMMERCE_AUDIT_LOG` file | Merchant (operator) | Until the operator's log retention removes it | Log rotation; `COMMERCE_AUDIT_INPUT=shape` keeps free text out in the first place |
 | 6 | Draft negotiable quote: name, SKUs, quantities, line notes ("RFQ line 3") | Magento | Merchant | Magento's own rules | Delete the quote in Magento |
-| 7 | HTTP mode sign-in state: OAuth clients, hashed access tokens, the company user's Magento token, sign-in failure counters (IP address and email) | Server memory only, never disk | Merchant (operator) | Tokens at most 1 hour; failure counters 15 minutes; all lost on restart | Revoke the token, or restart |
+| 7 | HTTP mode sign-in state: OAuth clients, hashed access tokens, the company user's Magento token, sign-in failure counters (IP address and email) | Server memory by default; with `COMMERCE_STATE_STORE=redis`, Redis, every value encrypted (AES-256-GCM) and every key hashed | Merchant (operator) | Tokens at most 1 hour, plus 24 hours so the user can be signed out at the store; codes 1 minute; sign-in requests 10 minutes; failure counters 15 minutes; client registrations 30 days. Memory: all lost on restart | Revoke the token; or restart (memory); or delete the keys under `COMMERCE_REDIS_PREFIX`, or change `COMMERCE_STATE_KEY` (Redis) |
 | 8 | Diagnostics: store error messages, failed tool calls | stderr | Merchant (operator) | Operator's log retention | Log rotation |
 | 9 | Golden eval set and published results | This repository | Project | Permanent | Synthetic data only, so nothing to delete |
 
-Not stored anywhere: passwords (the sign-in page passes them to the store's `generateCustomerToken` and keeps nothing), the Magento customer token outside server memory, and the original RFQ inside the run file (only the extracted fields are kept).
+Not stored anywhere: passwords (the sign-in page passes them to the store's `generateCustomerToken` and keeps nothing), the Magento customer token outside server memory or the encrypted Redis store, and the original RFQ inside the run file (only the extracted fields are kept).
 
 ## Design choices that limit data
 

@@ -13,11 +13,15 @@ async function stdio(config: Config) {
   log(`stdio backend=${backend.name} caller=${config.callerEmail} tools=${tools.join(",")}`);
 }
 
-function http(config: Config) {
+async function http(config: Config) {
   const h = config.http!;
-  const { app, mcpUrl, close } = createHttpApp(config);
+  const { app, mcpUrl, close, ready } = createHttpApp(config);
+  await ready();
+  if (h.state.kind === "redis" && !h.state.tls) {
+    log("warning: COMMERCE_REDIS_URL uses redis:// to a remote host. Stored values are encrypted, but the Redis password crosses the network in clear. Use rediss://.");
+  }
   const listener = app.listen(h.port, h.host, () => {
-    log(`http backend=${config.backend} listening on ${h.host}:${h.port}, MCP endpoint ${mcpUrl.href}, callers sign in with OAuth`);
+    log(`http backend=${config.backend} state=${h.state.kind} listening on ${h.host}:${h.port}, MCP endpoint ${mcpUrl.href}, callers sign in with OAuth`);
   });
   const stop = () => {
     void close().finally(() => listener.close(() => process.exit(0)));
@@ -32,7 +36,7 @@ async function main() {
     return runDemo(process.argv.slice(3));
   }
   const config = loadConfig();
-  if (config.transport === "http") http(config);
+  if (config.transport === "http") await http(config);
   else await stdio(config);
 }
 

@@ -6,8 +6,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { memoryAuditSink } from "../src/audit.js";
 import { loadConfig } from "../src/config.js";
-import { createHttpApp } from "../src/http/app.js";
-import { paasIdentity } from "../src/http/identity.js";
+import { createHttpApp, type HttpAppOptions } from "../src/http/app.js";
+import { mockIdentity, paasIdentity } from "../src/http/identity.js";
+import { MemoryStore, RedisStore, type StateStore } from "../src/http/state.js";
 import { companyContextReply, fakeStore, JANE } from "./fake-store.js";
 
 const PASSWORD = "demo-password-123";
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 /** Start the HTTP app on a free port with the mock backend. */
-async function start(env: Record<string, string> = {}) {
+async function start(env: Record<string, string> = {}, opts: HttpAppOptions = {}) {
   const node = createNodeServer();
   await new Promise<void>((r) => node.listen(0, "127.0.0.1", r));
   servers.push(node);
@@ -39,7 +40,7 @@ async function start(env: Record<string, string> = {}) {
     ...env,
   });
   const audit = memoryAuditSink();
-  const h = createHttpApp(config, { audit });
+  const h = createHttpApp(config, { audit, ...opts });
   node.on("request", h.app);
   closers.push(h.close);
   return { base, audit, ...h };
@@ -230,6 +231,90 @@ describe("HTTP transport with OAuth", () => {
   });
 });
 
+const REDIS_URL = process.env.COMMERCE_TEST_REDIS_URL;
+const sharedStores: Array<[string, (now?: () => number) => StateStore, boolean]> = [
+  ["memory", (now) => new MemoryStore({ now }), true],
+  [
+    "redis",
+    () => {
+      const s = new RedisStore({ url: REDIS_URL!, secret: "test-state-key-0123456789abcdef-0123", prefix: `test:${randomBytes(6).toString("hex")}:` });
+      closers.push(() => s.close());
+      return s;
+    },
+    Boolean(REDIS_URL),
+  ],
+];
+
+/** Instances behind one load balancer share one public URL, so tokens issued by any of them name the same resource. */
+const SHARED = { COMMERCE_PUBLIC_URL: "http://localhost:3999" };
+
+for (const [name, makeStore, enabled] of sharedStores) {
+  describe.skipIf(!enabled)(`Several instances sharing a ${name} store`, () => {
+    it("registers on one instance, signs in on another and serves /mcp on a third", async () => {
+      const store = makeStore();
+      const [a, b, c] = [await start(SHARED, { store }), await start(SHARED, { store }), await start(SHARED, { store })];
+      // Every instance publishes the same issuer and resource: they sit behind one public URL in production.
+      const { body } = await register(a.base);
+      const { login, verifier } = await signIn(b.base, body.client_id, SAM, PASSWORD, a.mcpUrl.href);
+      const code = new URL(login.headers.get("location")!).searchParams.get("code")!;
+      const res = await fetch(`${c.base}/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: form({ grant_type: "authorization_code", code, code_verifier: verifier, client_id: body.client_id, redirect_uri: REDIRECT }),
+      });
+      expect(res.status).toBe(200);
+      const { access_token } = (await res.json()) as { access_token: string };
+      const { client } = await mcpClient(new URL("/mcp", c.base), access_token);
+      const ctx = await client.callTool({ name: "get_company_context", arguments: {} });
+      expect(JSON.parse((ctx.content as Array<{ text: string }>)[0]!.text).user.email).toBe(SAM);
+    });
+
+    it("ends sessions on every instance when a token is revoked on one", async () => {
+      const store = makeStore();
+      const a = await start(SHARED, { store });
+      const b = await start(SHARED, { store });
+      const { token, clientId } = await tokenFor(a.base, a.mcpUrl.href);
+      await mcpClient(new URL("/mcp", b.base), token);
+      expect(b.sessions.size).toBe(1);
+      await fetch(`${a.base}/revoke`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: form({ token, client_id: clientId }) });
+      const res = await fetch(new URL("/mcp", b.base), { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" });
+      expect(res.status).toBe(401);
+      await b.sweep();
+      expect(b.sessions.size).toBe(0);
+    });
+
+    it("counts failed sign-ins across instances", async () => {
+      const store = makeStore();
+      const a = await start(SHARED, { store });
+      const b = await start(SHARED, { store });
+      const { body } = await register(a.base);
+      for (let i = 0; i < 5; i++) await signIn(i % 2 ? a.base : b.base, body.client_id, SAM, "wrong-password", a.mcpUrl.href);
+      const locked = await signIn(a.base, body.client_id, SAM, PASSWORD, a.mcpUrl.href);
+      expect(locked.login.status).toBe(429);
+    });
+  });
+}
+
+describe("Grant expiry", () => {
+  it("signs an expired grant out at the store exactly once, however many instances sweep", async () => {
+    let t = Date.now();
+    const now = () => t;
+    const store = new MemoryStore({ now });
+    const signOuts: string[] = [];
+    const base = mockIdentity(PASSWORD);
+    const identity = { signIn: base.signIn, signOut: async (u: { email: string }) => void signOuts.push(u.email) };
+    const a = await start(SHARED, { store, identity, now });
+    const b = await start(SHARED, { store, identity, now });
+    const { token } = await tokenFor(a.base, a.mcpUrl.href);
+    await mcpClient(new URL("/mcp", b.base), token);
+
+    t += 3600_000 + 1;
+    await Promise.all([a.sweep(), b.sweep()]);
+    expect(signOuts).toEqual([SAM]);
+    expect(b.sessions.size).toBe(0);
+  });
+});
+
 describe("HTTP config", () => {
   const base = { COMMERCE_BACKEND: "mock", COMMERCE_TRANSPORT: "http", COMMERCE_MOCK_PASSWORD: PASSWORD };
   it("refuses a fixed identity over HTTP", () => {
@@ -243,6 +328,20 @@ describe("HTTP config", () => {
     expect(loadConfig({ ...base, COMMERCE_HTTP_TOKEN_TTL_SECONDS: "86400" }).http!.tokenTtlSeconds).toBe(3600);
     expect(() => loadConfig({ COMMERCE_BACKEND: "mock", COMMERCE_TRANSPORT: "http" })).toThrow(/COMMERCE_MOCK_PASSWORD/);
   });
+  it("needs a Redis URL and a 32-character state key for the shared store, and never echoes the URL", () => {
+    const http = { COMMERCE_TRANSPORT: "http", COMMERCE_MOCK_PASSWORD: PASSWORD };
+    expect(loadConfig(http).http!.state).toEqual({ kind: "memory" });
+    expect(() => loadConfig({ ...http, COMMERCE_STATE_STORE: "redis" })).toThrow(/COMMERCE_REDIS_URL is required/);
+    expect(() => loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "redis://localhost:6379", COMMERCE_STATE_KEY: "short" })).toThrow(/COMMERCE_STATE_KEY/);
+    expect(() => loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "http://:pw-secret@x", COMMERCE_STATE_KEY: "k".repeat(32) })).toThrow(/redis:\/\//);
+    expect(() => loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "not a url :pw-secret", COMMERCE_STATE_KEY: "k".repeat(32) })).toThrow(/^(?!.*pw-secret)/);
+    expect(() => loadConfig({ ...http, COMMERCE_REDIS_URL: "redis://localhost:6379" })).toThrow(/COMMERCE_STATE_STORE/);
+    const key = "k".repeat(32);
+    expect(loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "redis://localhost:6379", COMMERCE_STATE_KEY: key }).http!.state).toMatchObject({ kind: "redis", tls: true });
+    expect(loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "redis://cache.internal:6379", COMMERCE_STATE_KEY: key }).http!.state).toMatchObject({ tls: false });
+    expect(loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "rediss://cache.example.com:6380", COMMERCE_STATE_KEY: key }).http!.state).toMatchObject({ tls: true, prefix: "commerce-b2b-mcp:" });
+  });
+
   it("does not need customer credentials for paas over HTTP", () => {
     const c = loadConfig({ COMMERCE_BACKEND: "paas", COMMERCE_TRANSPORT: "http", COMMERCE_BASE_URL: "https://store.example.com", COMMERCE_CONFIRM_SECRET: "x".repeat(32) });
     expect(c.paas!.auth).toBeUndefined();

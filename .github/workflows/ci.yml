@@ -9,6 +9,19 @@ jobs:
     strategy:
       matrix:
         node: [20, 22, 24]
+    # A disposable Redis for the shared state store tests (they are skipped without it).
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      COMMERCE_TEST_REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

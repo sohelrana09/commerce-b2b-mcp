@@ -10,6 +10,7 @@ import {
 import type { AuthorizationParams, OAuthServerProvider } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { MemoryStore, type StateStore } from "./state.js";
 
 /** The one scope this server issues: act as the signed-in company user. */
 export const SCOPE = "commerce";
@@ -35,11 +36,14 @@ export interface Grant {
   expiresAt: number; // ms
 }
 
+/** A sign-in request between /authorize and /login. Plain JSON, so any instance can read it. */
 interface Pending {
-  client: OAuthClientInformationFull;
-  params: AuthorizationParams;
+  clientId: string;
+  clientName?: string;
+  redirectUri: string;
+  codeChallenge: string;
+  state?: string;
   resource: string;
-  expiresAt: number;
 }
 
 interface Code {
@@ -58,12 +62,18 @@ export interface ProviderOptions {
   tokenTtlSeconds: number;
   /** Hosts allowed in redirect URIs besides loopback. */
   redirectHosts: string[];
-  /** Called when a grant ends (revoked or expired) so its MCP sessions can be closed. */
+  /** Called when a grant ends (revoked or expired) so this instance's MCP sessions can be closed. */
   onGrantEnded?: (grantId: string) => void;
+  /** Sign-in state. Defaults to memory (one instance); Redis shares it between instances (ADR 19). */
+  store?: StateStore;
   now?: () => number;
 }
 
 const CODE_TTL_MS = 60_000;
+/** Registrations are kept 30 days; a client that is forgotten registers again. */
+const CLIENT_TTL_MS = 30 * 24 * 3600_000;
+/** Grants stay readable this long after expiry, so the sweep can still sign the user out at the store. */
+const GRANT_GRACE_MS = 24 * 3600_000;
 const PENDING_TTL_MS = 10 * 60_000;
 const MAX_CLIENTS = 1000;
 const MAX_FAILURES = 5;
@@ -82,37 +92,33 @@ const esc = (s: string) =>
  * the store checks them (ADR 1: never an admin). Each access token is opaque,
  * stored only as a SHA-256 hash, bound to this MCP resource and to exactly
  * one company user, and lives at most an hour. There are no refresh tokens:
- * the client signs in again. State is in memory, so this is one instance only.
+ * the client signs in again. State is in a StateStore: memory for one
+ * instance, Redis for several (ADR 19).
  */
 export class CommerceOAuthProvider implements OAuthServerProvider {
-  private readonly clients = new Map<string, OAuthClientInformationFull>();
-  private readonly pending = new Map<string, Pending>();
-  private readonly codes = new Map<string, Code>();
-  private readonly tokens = new Map<string, Grant>();
-  private readonly failures = new Map<string, { count: number; since: number }>();
+  readonly store: StateStore;
   private readonly now: () => number;
 
   constructor(private readonly opts: ProviderOptions) {
     this.now = opts.now ?? Date.now;
+    this.store = opts.store ?? new MemoryStore({ now: this.now, maxEntries: { client: MAX_CLIENTS } });
   }
 
   // ------------------------------------------------------------ clients
 
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
-      getClient: (id) => this.clients.get(id),
-      registerClient: (meta) => {
+      getClient: (id) => this.store.get<OAuthClientInformationFull>("client", id),
+      registerClient: async (meta) => {
         for (const uri of meta.redirect_uris) this.checkRedirect(String(uri));
-        if (this.clients.size >= MAX_CLIENTS) {
-          // Forget the oldest registration; its user can register again.
-          this.clients.delete(this.clients.keys().next().value!);
-        }
         const client: OAuthClientInformationFull = {
           ...meta,
           client_id: randomUUID(),
           client_id_issued_at: Math.floor(this.now() / 1000),
         };
-        this.clients.set(client.client_id, client);
+        // The memory store keeps at most MAX_CLIENTS and forgets the oldest; Redis relies on the TTL and the
+        // SDK's per-address rate limit on /register.
+        await this.store.set("client", client.client_id, client, CLIENT_TTL_MS);
         return client;
       },
     };
@@ -156,12 +162,21 @@ export class CommerceOAuthProvider implements OAuthServerProvider {
       return;
     }
     const id = opaque();
-    this.pending.set(id, { client, params, resource, expiresAt: this.now() + PENDING_TTL_MS });
-    this.renderLogin(res, id, client, params.redirectUri);
+    const p: Pending = {
+      clientId: client.client_id,
+      clientName: client.client_name,
+      redirectUri: params.redirectUri,
+      codeChallenge: params.codeChallenge,
+      state: params.state,
+      resource,
+    };
+    await this.store.set("pending", id, p, PENDING_TTL_MS);
+    this.renderLogin(res, id, p);
   }
 
-  private renderLogin(res: Response, requestId: string, client: OAuthClientInformationFull, redirectUri: string, error?: string, status = 200) {
-    const app = esc(client.client_name ?? "An MCP client");
+  private renderLogin(res: Response, requestId: string, p: Pending, error?: string, status = 200) {
+    const app = esc(p.clientName ?? "An MCP client");
+    const redirectUri = p.redirectUri;
     const host = esc(new URL(redirectUri).host);
     res
       .status(status)
@@ -194,15 +209,14 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
       const requestId = typeof body.request === "string" ? body.request : "";
       const email = typeof body.email === "string" ? body.email.trim() : "";
       const password = typeof body.password === "string" ? body.password : "";
-      const p = this.pending.get(requestId);
-      if (!p || p.expiresAt < this.now()) {
-        this.pending.delete(requestId);
+      const p = requestId ? await this.store.get<Pending>("pending", requestId) : undefined;
+      if (!p) {
         res.status(400).type("text/plain").send("This sign-in request has expired. Start again from your AI assistant.");
         return;
       }
       const key = `${req.ip ?? "?"}|${email.toLowerCase()}`;
-      if (this.tooManyFailures(key)) {
-        this.renderLogin(res, requestId, p.client, p.params.redirectUri, "Too many failed attempts. Wait 15 minutes and try again.", 429);
+      if ((await this.store.count("failure", key)) >= MAX_FAILURES) {
+        this.renderLogin(res, requestId, p, "Too many failed attempts. Wait 15 minutes and try again.", 429);
         return;
       }
       let user: SignedInUser;
@@ -210,50 +224,40 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
         if (!email || !password) throw new Error("missing");
         user = await this.opts.identity.signIn(email, password);
       } catch {
-        this.recordFailure(key);
+        await this.store.increment("failure", key, FAILURE_WINDOW_MS);
         // One message for every failure, so the page does not reveal which emails exist.
-        this.renderLogin(res, requestId, p.client, p.params.redirectUri, "Sign-in failed. Check your email and password, and that your account belongs to a company.", 401);
+        this.renderLogin(res, requestId, p, "Sign-in failed. Check your email and password, and that your account belongs to a company.", 401);
         return;
       }
-      this.failures.delete(key);
-      this.pending.delete(requestId);
+      await this.store.delete("failure", key);
+      // Single use: of two concurrent sign-ins on one request, only the first gets a code.
+      if (!(await this.store.take<Pending>("pending", requestId))) {
+        void this.opts.identity.signOut(user).catch(() => undefined);
+        res.status(400).type("text/plain").send("This sign-in request has expired. Start again from your AI assistant.");
+        return;
+      }
       const code = opaque();
-      this.codes.set(code, {
-        clientId: p.client.client_id,
-        redirectUri: p.params.redirectUri,
-        challenge: p.params.codeChallenge,
+      const c: Code = {
+        clientId: p.clientId,
+        redirectUri: p.redirectUri,
+        challenge: p.codeChallenge,
         resource: p.resource,
         user,
         expiresAt: this.now() + CODE_TTL_MS,
-      });
-      const target = new URL(p.params.redirectUri);
+      };
+      await this.store.set("code", code, c, CODE_TTL_MS);
+      const target = new URL(p.redirectUri);
       target.searchParams.set("code", code);
-      if (p.params.state !== undefined) target.searchParams.set("state", p.params.state);
+      if (p.state !== undefined) target.searchParams.set("state", p.state);
       res.redirect(302, target.href);
     });
     return router;
   }
 
-  private tooManyFailures(key: string): boolean {
-    const f = this.failures.get(key);
-    if (!f) return false;
-    if (this.now() - f.since > FAILURE_WINDOW_MS) {
-      this.failures.delete(key);
-      return false;
-    }
-    return f.count >= MAX_FAILURES;
-  }
-
-  private recordFailure(key: string): void {
-    const f = this.failures.get(key);
-    if (!f || this.now() - f.since > FAILURE_WINDOW_MS) this.failures.set(key, { count: 1, since: this.now() });
-    else f.count++;
-  }
-
   // ------------------------------------------------------------ tokens
 
   async challengeForAuthorizationCode(client: OAuthClientInformationFull, code: string): Promise<string> {
-    const c = this.codes.get(code);
+    const c = await this.store.get<Code>("code", code);
     if (!c || c.clientId !== client.client_id || c.expiresAt < this.now()) throw new InvalidGrantError("Invalid or expired authorization code.");
     return c.challenge;
   }
@@ -265,21 +269,19 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
     redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
-    const c = this.codes.get(code);
-    this.codes.delete(code); // single use, even when the exchange fails
+    const c = await this.store.take<Code>("code", code); // single use, even when the exchange fails
     if (!c || c.clientId !== client.client_id || c.expiresAt < this.now()) throw new InvalidGrantError("Invalid or expired authorization code.");
     if (redirectUri !== undefined && redirectUri !== c.redirectUri) throw new InvalidGrantError("redirect_uri does not match the authorization request.");
     if (resource && this.resourceFor(resource) !== c.resource) throw new InvalidTargetError("Resource does not match the authorization request.");
 
     const token = opaque();
     const ttl = this.opts.tokenTtlSeconds;
-    this.tokens.set(hash(token), {
-      id: randomUUID(),
-      clientId: client.client_id,
-      user: c.user,
-      resource: c.resource,
-      expiresAt: this.now() + ttl * 1000,
-    });
+    const g: Grant = { id: randomUUID(), clientId: client.client_id, user: c.user, resource: c.resource, expiresAt: this.now() + ttl * 1000 };
+    const key = hash(token);
+    const keep = ttl * 1000 + GRANT_GRACE_MS;
+    await this.store.set("token", key, g, keep);
+    await this.store.set("grant", g.id, key, keep);
+    await this.store.schedule("grant-expiry", g.id, g.expiresAt);
     return { access_token: token, token_type: "bearer", expires_in: ttl, scope: SCOPE };
   }
 
@@ -288,7 +290,7 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    const g = this.tokens.get(hash(token));
+    const g = await this.store.get<Grant>("token", hash(token));
     if (!g || g.expiresAt < this.now()) throw new InvalidTokenError("Invalid or expired access token.");
     return {
       token,
@@ -303,29 +305,42 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
 
   async revokeToken(client: OAuthClientInformationFull, request: OAuthTokenRevocationRequest): Promise<void> {
     const key = hash(request.token);
-    const g = this.tokens.get(key);
+    const g = await this.store.get<Grant>("token", key);
     if (!g || g.clientId !== client.client_id) return; // RFC 7009: unknown tokens are not an error
-    this.endGrant(key, g);
+    await this.store.unschedule("grant-expiry", g.id);
+    await this.endGrant(key, g);
   }
 
   /** The signed-in user behind a live grant (server side only). */
-  userForGrant(grantId: string): SignedInUser | undefined {
-    for (const g of this.tokens.values()) if (g.id === grantId && g.expiresAt >= this.now()) return g.user;
-    return undefined;
+  async userForGrant(grantId: string): Promise<SignedInUser | undefined> {
+    const key = await this.store.get<string>("grant", grantId);
+    const g = key ? await this.store.get<Grant>("token", key) : undefined;
+    return g && g.id === grantId && g.expiresAt >= this.now() ? g.user : undefined;
   }
 
-  private endGrant(key: string, g: Grant): void {
-    this.tokens.delete(key);
+  private async endGrant(key: string, g: Grant): Promise<void> {
+    await this.store.delete("token", key);
+    await this.store.delete("grant", g.id);
     this.opts.onGrantEnded?.(g.id);
     void this.opts.identity.signOut(g.user).catch(() => undefined);
   }
 
-  /** Drop expired codes, sign-in requests, failure counters and grants. Called on a timer. */
-  sweep(): void {
-    const now = this.now();
-    for (const [k, v] of this.pending) if (v.expiresAt < now) this.pending.delete(k);
-    for (const [k, v] of this.codes) if (v.expiresAt < now) this.codes.delete(k);
-    for (const [k, v] of this.failures) if (now - v.since > FAILURE_WINDOW_MS) this.failures.delete(k);
-    for (const [k, g] of this.tokens) if (g.expiresAt < now) this.endGrant(k, g);
+  /**
+   * End grants that have expired: sign the user out at the store and close
+   * their sessions here. With several instances each grant is claimed by
+   * exactly one of them. Codes, sign-in requests and failure counters expire
+   * by TTL. Called on a timer.
+   */
+  async sweep(): Promise<void> {
+    if (this.store instanceof MemoryStore) this.store.sweep();
+    for (;;) {
+      const due = await this.store.claimDue("grant-expiry", this.now(), 100);
+      for (const id of due) {
+        const key = await this.store.get<string>("grant", id);
+        const g = key ? await this.store.get<Grant>("token", key) : undefined;
+        if (key && g) await this.endGrant(key, g);
+      }
+      if (due.length < 100) return;
+    }
   }
 }

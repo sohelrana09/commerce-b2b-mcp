@@ -22,6 +22,7 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 | 16 | [Evals: one number that must be zero](#16-evals-one-number-that-must-be-zero) | Evaluation |
 | 17 | [Fix matching with catalogue data, not prompts](#17-fix-matching-with-catalogue-data-not-prompts) | Data, lifecycle |
 | 18 | [Minimise customer data, and make deletion a command](#18-minimise-customer-data-and-make-deletion-a-command) | Governance, privacy |
+| 19 | [Shared sign-in state in Redis, encrypted, for more than one instance](#19-shared-sign-in-state-in-redis-encrypted-for-more-than-one-instance) | Scaling, security |
 
 ---
 
@@ -111,7 +112,7 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 
 **Rejected.** A shared API key (one key for many users breaks caller scoping and auditing). Passing the Magento customer token through as the bearer token (it would reach the client and every proxy log, and could not be bound to this resource or revoked by us). Refresh tokens (the store session lasts an hour anyway; signing in again is simpler and re-checks company membership). Delegating to Adobe IMS now (the right answer for ACCS, not for PaaS customer accounts).
 
-**Consequences.** Decision 1 holds over the network: the blast radius is still one company user. State is in memory, so this is single-instance; more instances or App Builder need a shared token store. Each tool call gets a `trace_id` (returned in `_meta`) and the audit line records the session, OAuth client and the store requests the call made, so a slow or failed call can be traced to one user, one session and the store.
+**Consequences.** Decision 1 holds over the network: the blast radius is still one company user. State was in memory, so this was single-instance; decision 19 adds a shared store. Each tool call gets a `trace_id` (returned in `_meta`) and the audit line records the session, OAuth client and the store requests the call made, so a slow or failed call can be traced to one user, one session and the store.
 
 ### 12. The quote assistant is a workflow, not an agent
 
@@ -170,3 +171,21 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 **Rejected.** Encrypting the logs instead of minimising them (the operator holds the key, so the data is still there to leak). Leaving deletion to manual file editing (error-prone, and nobody does it on time). A blanket "no logging" mode (it breaks the audit trail decision 1 depends on).
 
 **Consequences.** `full` stays the default, because it is the most useful while debugging; production deployments should set `shape`. Run files have no automatic expiry yet. Anthropic retention depends on the account (30 days standard, or zero data retention on request) and on the model: the Covered Models (the Fable and Mythos families) require 30-day retention.
+
+### 19. Shared sign-in state in Redis, encrypted, for more than one instance
+
+**Context.** Decision 11 kept OAuth clients, sign-in requests, codes, access-token grants and sign-in failure counters in one process's memory. That means one instance: no failover, no rolling deploy without signing everyone out, and a sign-in lockout that a second instance would not see. The grants hold each user's Magento customer token, so wherever they are shared becomes the most sensitive store in the deployment.
+
+**Decision.** One `StateStore` interface with two implementations: memory (the default, unchanged behaviour) and Redis (`COMMERCE_STATE_STORE=redis`). The provider uses only get, set with a TTL, take (read and delete in one step), a windowed counter and a schedule of grant expiries. In Redis:
+
+- every value is encrypted with AES-256-GCM under a key derived from `COMMERCE_STATE_KEY`, with the Redis key as associated data, so a value copied to another key does not decrypt;
+- every key is a SHA-256 hash of the real id, so a dump or `MONITOR` shows no usable code, access token or email address;
+- lifetimes are Redis TTLs, so nothing outlives its expiry even if every instance stops;
+- single-use codes and sign-in requests are taken with `GETDEL`, so two instances cannot both redeem one;
+- grant expiries are a sorted set, and `ZREM` hands each expired grant to exactly one instance, which signs the user out at the store.
+
+Each instance still closes its own MCP sessions: on its one-minute sweep it checks every session's grant against the store, so a token revoked or expired on another instance ends the session here too, and the bearer check refuses the token at once on every instance.
+
+**Rejected.** Stateless tokens (signed JWTs carrying the customer token): they cannot be revoked before expiry, and the customer token would travel to the client inside them. A database table: it adds a schema and migrations for data that lives an hour. Encrypting only the customer token field: the email and client metadata are personal data too, and one rule ("everything is sealed") is easier to review than a field list. Sharing the MCP sessions themselves: a session is a live server object with an open stream, and the Streamable HTTP spec already lets a client recover from a lost session by starting a new one.
+
+**Consequences.** Several instances can run behind one public URL. MCP sessions stay on the instance that opened them, so the load balancer should route by the `Mcp-Session-Id` header; without that, a request that lands elsewhere gets 404 and the client opens a new session, which works but costs an initialize round trip. Every instance needs the same `COMMERCE_STATE_KEY`, and changing it signs everyone out (old values no longer decrypt and are treated as absent). Redis becomes a dependency to run and secure: use `rediss://`, a password, and no persistence or encrypted persistence. The memory store keeps its 1,000-client cap; in Redis, registrations expire after 30 days and `/register` is rate-limited per address. App Builder also needs a stateless HTTP mode, which is still to do.

@@ -28,7 +28,21 @@ export interface HttpConfig {
   redirectHosts: string[];
   /** Mock backend only: the shared demo password for fixture users. */
   mockPassword: string;
+  /** Where sign-in state lives: this process's memory, or Redis shared by several instances (ADR 19). */
+  state: StateConfig;
 }
+
+export type StateConfig =
+  | { kind: "memory" }
+  | {
+      kind: "redis";
+      url: string;
+      /** Encrypts every stored value (AES-256-GCM). 32+ characters. */
+      secret: string;
+      prefix: string;
+      /** False for redis:// to a host other than loopback: values are encrypted, but the Redis password is not. */
+      tls: boolean;
+    };
 
 export interface Config {
   backend: "mock" | "paas";
@@ -165,10 +179,36 @@ function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfi
     host,
     port,
     publicUrl,
+    state: loadState(env),
     tokenTtlSeconds: Math.min(ttl, 3600),
     redirectHosts: parseList(env.COMMERCE_OAUTH_REDIRECT_HOSTS) ?? [],
     mockPassword,
   };
+}
+
+function loadState(env: NodeJS.ProcessEnv): StateConfig {
+  const kind = env.COMMERCE_STATE_STORE ?? "memory";
+  if (kind === "memory") {
+    if (env.COMMERCE_REDIS_URL) throw new Error('COMMERCE_REDIS_URL is set but COMMERCE_STATE_STORE is not "redis". Set COMMERCE_STATE_STORE=redis to use it.');
+    return { kind };
+  }
+  if (kind !== "redis") throw new Error(`COMMERCE_STATE_STORE must be "memory" or "redis", got "${kind}"`);
+  const raw = env.COMMERCE_REDIS_URL;
+  if (!raw) throw new Error("COMMERCE_REDIS_URL is required when COMMERCE_STATE_STORE=redis, e.g. rediss://:password@redis.example.com:6380");
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    // Never echo the value: it usually holds the Redis password.
+    throw new Error("COMMERCE_REDIS_URL is not a valid URL. Use redis://host:6379 or rediss://host:6380.");
+  }
+  if (url.protocol !== "redis:" && url.protocol !== "rediss:") throw new Error("COMMERCE_REDIS_URL must start with redis:// or rediss://.");
+  const secret = env.COMMERCE_STATE_KEY ?? "";
+  if (secret.length < 32) {
+    throw new Error("COMMERCE_STATE_KEY (32+ characters) is required with Redis: it encrypts the customer tokens kept there. Use the same value on every instance.");
+  }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  return { kind, url: raw, secret, prefix: env.COMMERCE_REDIS_PREFIX ?? "commerce-b2b-mcp:", tls: url.protocol === "rediss:" || loopback };
 }
 
 function parseAuditInput(raw: string | undefined): AuditInputMode {

@@ -13,6 +13,7 @@ import type { Config } from "../config.js";
 import { createServer } from "../server.js";
 import { mockIdentity, paasIdentity } from "./identity.js";
 import { CommerceOAuthProvider, SCOPE, type IdentityProvider, type SignedInUser } from "./oauth.js";
+import { RedisStore, type StateStore } from "./state.js";
 
 interface Session {
   transport: StreamableHTTPServerTransport;
@@ -26,6 +27,8 @@ export interface HttpAppOptions {
   audit?: AuditSink;
   /** Backend shared by all sessions (mock only). PaaS builds one per session from the user's customer token. */
   sharedBackend?: CommerceBackend;
+  /** Sign-in state. Defaults to what the config says: memory, or Redis shared between instances. */
+  store?: StateStore;
   now?: () => number;
 }
 
@@ -58,8 +61,13 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
 
   const identity =
     opts.identity ?? (config.backend === "mock" ? mockIdentity(http.mockPassword) : paasIdentity(config.paas!));
+  const ownStore = !opts.store && http.state.kind === "redis";
+  const store =
+    opts.store ??
+    (http.state.kind === "redis" ? new RedisStore({ url: http.state.url, secret: http.state.secret, prefix: http.state.prefix }) : undefined);
   const provider = new CommerceOAuthProvider({
     identity,
+    store,
     resource: mcpUrl,
     tokenTtlSeconds: http.tokenTtlSeconds,
     redirectHosts: http.redirectHosts,
@@ -129,7 +137,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     if (req.method !== "POST" || !isInitializeRequest(req.body)) {
       return void rpcError(res, 400, "No session. Send an initialize request first.");
     }
-    const user = provider.userForGrant(grantId);
+    const user = await provider.userForGrant(grantId);
     if (!user) return void rpcError(res, 401, "Sign-in has ended. Sign in again.");
     const mine = [...sessions.values()].filter((s) => s.grantId === grantId).length;
     if (sessions.size >= MAX_SESSIONS || mine >= MAX_SESSIONS_PER_USER) {
@@ -150,11 +158,26 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     await transport.handleRequest(req, res, req.body);
   });
 
-  const sweep = () => {
-    provider.sweep();
-    for (const [id, s] of sessions) if (now() - s.lastSeen > IDLE_MS) closeSession(id);
+  /**
+   * Close idle sessions, and sessions whose grant has ended anywhere: with a
+   * shared store, a token can be revoked or expire on another instance, and
+   * only the store knows.
+   */
+  const sweep = async () => {
+    await provider.sweep();
+    const alive = new Map<string, boolean>();
+    for (const [id, s] of [...sessions]) {
+      if (now() - s.lastSeen > IDLE_MS) {
+        closeSession(id);
+        continue;
+      }
+      if (!alive.has(s.grantId)) alive.set(s.grantId, (await provider.userForGrant(s.grantId)) !== undefined);
+      if (!alive.get(s.grantId)) closeSession(id);
+    }
   };
-  const timer = setInterval(sweep, 60_000);
+  const timer = setInterval(() => {
+    sweep().catch((err: unknown) => process.stderr.write(`[commerce-b2b-mcp] sweep failed: ${err instanceof Error ? err.message : String(err)}\n`));
+  }, 60_000);
   timer.unref();
 
   return {
@@ -163,9 +186,12 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     sessions,
     mcpUrl,
     sweep,
+    /** Resolves once the sign-in state store is reachable. Call before listening. */
+    ready: () => provider.store.ready(),
     async close() {
       clearInterval(timer);
       for (const id of [...sessions.keys()]) closeSession(id);
+      if (ownStore) await provider.store.close();
     },
   };
 }
