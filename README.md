@@ -13,7 +13,7 @@
 
 Built by [Sohel Rana](https://sohelrana.io), Adobe Certified Master Architect and Claude Certified Architect – Foundations (CCAR-F).
 
-**[Demo in one command](#see-it-in-one-command)** · [Quick start](#quick-start) · [Safety model](#safety-model) · [Quote assistant](#rfq-quote-assistant) · [Architecture decisions](docs/decisions.md)
+**[Demo in one command](#see-it-in-one-command)** · [Quick start](#quick-start) · [Safety model](#safety-model) · [Quote assistant](#rfq-quote-assistant) · [Architecture decisions](docs/decisions.md) · [Contributing](CONTRIBUTING.md)
 
 With this server, an agent such as Claude can find the right part from messy RFQ text, check MSI stock and get the company's real price. It can also look up orders and reorder lists, and draft a negotiable quote for a person to approve.
 
@@ -572,6 +572,8 @@ Bug fixes, new B2B tools, adapters and better evals are all welcome. For larger 
 4. Open a pull request that says what changed and how you tested it. A significant design choice gets an ADR in [docs/decisions.md](docs/decisions.md).
 
 Working with Claude Code: [`.claude/settings.json`](.claude/settings.json) shares the team's permissions, and a hook typechecks after every TypeScript edit. Onboarding, shared and personal settings, and the review checklist are in [docs/team-setup.md](docs/team-setup.md).
+
+The full guide is in [CONTRIBUTING.md](CONTRIBUTING.md). Please report security problems privately, see [SECURITY.md](SECURITY.md).
 
 ## License
 
