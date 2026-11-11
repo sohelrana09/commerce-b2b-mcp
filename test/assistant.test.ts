@@ -8,7 +8,8 @@ import { readCorrections, recordCorrection } from "../src/assistant/corrections.
 import { ClaudeExtractor, EXTRACTION_SYSTEM } from "../src/assistant/extract/claude.js";
 import { HeuristicExtractor } from "../src/assistant/extract/heuristic.js";
 import type { ExtractedLine, Extraction, Extractor } from "../src/assistant/extract/schema.js";
-import { inProcessTools, score } from "../src/assistant/eval/run.js";
+import { compare, inProcessTools, score, type Scores } from "../src/assistant/eval/run.js";
+import { usageCost } from "../src/assistant/pricing.js";
 import { draftInput, reviewRfq, type QuoteReview } from "../src/assistant/pipeline.js";
 import { renderReview } from "../src/assistant/report.js";
 
@@ -215,5 +216,56 @@ describe("eval and corrections", () => {
     const [rec] = readCorrections(path);
     expect(rec).toMatchObject({ raw_text: "M8x25 SS hex setscrew", expected_sku: "HF-HSS-M8-25-A4", rep_note: "customer confirmed 316" });
     expect(() => recordCorrection(path, r, "99", { sku: null })).toThrow(/not in the review/);
+  });
+});
+
+describe("cost and setting choice", () => {
+  const usage = (model: string, output: number, ms = 1000) => ({
+    model,
+    input_tokens: 500,
+    output_tokens: output,
+    cache_read_input_tokens: 2846,
+    cache_creation_input_tokens: 0,
+    ms,
+  });
+
+  it("prices a call by the model that answered, and leaves unknown models unpriced", () => {
+    // 500 x $4 + 4000 x $20 + 2846 x $0.20, per million tokens
+    expect(usageCost(usage("claude-opus-5-5", 4000))).toBeCloseTo((500 * 4 + 4000 * 20 + 2846 * 0.2) / 1e6, 9);
+    expect(usageCost(usage("claude-unknown-1", 4000))).toBeUndefined();
+  });
+
+  it("picks the cheapest setting that keeps wrong-ready at 0 and quality within 2 points", () => {
+    const base: Scores = {
+      expected_lines: 100, predicted_lines: 100, lines_found: 100, qty_correct: 100, with_answer: 100, top1: 100, top3: 100,
+      expected_review: 20, flagged_review: 25, review_caught: 20, review_false_alarm: 5, accepted_without_edits: 75,
+      unsafe_ready: 0, injection_docs: 1, injection_flagged: 1, unsafe_examples: [],
+    };
+    const run = (u: ReturnType<typeof usage>) => [{ usage: u } as QuoteReview];
+    const md = compare([
+      { extractor: "claude:claude-opus-5-5:high", scores: base, runs: run(usage("claude-opus-5-5", 9000)) },
+      { extractor: "claude:claude-opus-5-5:low", scores: { ...base, top1: 99 }, runs: run(usage("claude-opus-5-5", 2000)) },
+      { extractor: "claude:claude-haiku-5-5:medium", scores: { ...base, unsafe_ready: 1 }, runs: run(usage("claude-haiku-5-5", 2000)) },
+      { extractor: "claude:claude-sonnet-5-5:medium", scores: { ...base, top1: 90 }, runs: run(usage("claude-sonnet-5-5", 2000)) },
+    ]);
+    expect(md).toContain("**Pick: claude-opus-5-5:low**");
+    expect(md).toMatch(/claude-haiku-5-5:medium \| 1 .*\| no \|/);
+    expect(md).toMatch(/claude-sonnet-5-5:medium \| 0 .*\| no \|/);
+  });
+});
+
+describe("service targets", () => {
+  it("reports missed targets without failing on them, and gates only on wrong-ready", async () => {
+    const { TARGETS, targetTable } = await import("../src/assistant/eval/targets.js");
+    expect(TARGETS.filter((t) => t.gate).map((t) => t.name)).toEqual(["Wrong lines marked ready"]);
+    const s: Scores = {
+      expected_lines: 100, predicted_lines: 90, lines_found: 90, qty_correct: 90, with_answer: 90, top1: 90, top3: 90,
+      expected_review: 20, flagged_review: 20, review_caught: 20, review_false_alarm: 0, accepted_without_edits: 70,
+      unsafe_ready: 0, injection_docs: 1, injection_flagged: 1, unsafe_examples: [],
+    };
+    const md = targetTable(s, { rfqs: 1, input: 0, output: 0, cache_read: 0, cache_write: 0, usd: 0.2, ms: 100_000, max_ms: 100_000 });
+    expect(md).toContain("| Lines found | >= 98% | 90.0% | **missed** |");
+    expect(md).toContain("| Intake cost per RFQ (list price) | <= $0.15 | $0.2000 | **missed** |");
+    expect(md).toContain("| Wrong lines marked ready (release gate) | 0 | 0 | met |");
   });
 });

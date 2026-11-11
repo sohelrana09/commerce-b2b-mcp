@@ -84,6 +84,8 @@ The model is used for one step, reading the RFQ. Everything after it is determin
 ```bash
 npm run eval                              # rule-based intake: free, deterministic, also runs in CI
 npm run eval -- --extractor claude        # Claude intake: calls the API (about $1 for the full set at the default settings)
+npm run eval -- --sweep claude-opus-5-5:low,claude-haiku-5-5:medium   # several settings in parallel, then a comparison
+npm run eval -- --compare                 # rebuild evals/results/comparison.md from saved runs (free)
 npm run eval:golden                       # regenerate the golden set from the catalogue
 ```
 
@@ -106,6 +108,8 @@ Results on the golden set:
 | Time for 9 RFQs | under 1 s | 350 s (about 39 s per RFQ) |
 
 Claude reads every line, including the prose email and the injection paragraph, and catches every line that needs review. It costs precision: all 10 extra flags are lines it marked uncertain itself. Most are caution a rep would skip ("x 100" with no unit, nut material not stated). Two are arguably right and point at the golden labels instead: a CSV row that repeats an earlier line, and "grade 8" on flat washers. Next: tighten the intake prompt on unit-less quantities, review those two labels, and measure lower effort and smaller models against the same safety number (ADR 15).
+
+Each run is priced by the model that answered and checked against the [service targets](docs/service-targets.md): cost and time per RFQ, recall, review precision and the safety gate. At $0.078 and 39 seconds per RFQ, Opus 5.5 at medium effort meets every target; the rule-based intake misses lines-found and needs-review recall.
 
 The set is synthetic: it is generated from the same vocabulary the rule-based parser knows, so the baseline is flattering on the clean lines, and it misses what rules cannot read (the prose email, the injection, the non-fastener lines). A real deployment should be measured on a golden set built from the merchant's past quotes, with the SKU a person actually chose; the corrections log is how that set grows.
 
@@ -291,6 +295,8 @@ npm run dev       # run from source with tsx
 - [ ] Test with an inventory integration token (MSI salable qty, per-source stock)
 - [ ] Parser evals on real catalogue names (e.g. "Screw Gudgeon" is read as a screw)
 - [x] v0.4: Streamable HTTP transport with OAuth, each token mapped to one company user, and per-call tracing
+- [x] Service targets for the quote assistant (cost, latency, quality), checked by every eval run
+- [ ] Run the effort and model sweep (built: `npm run eval -- --sweep`)
 - [ ] Shared token store for more than one instance
 - [ ] ACCS adapter with Adobe IMS; confirm which B2B APIs ACCS exposes before claiming parity
 - [ ] App Builder / I/O Runtime deployment in stateless HTTP mode

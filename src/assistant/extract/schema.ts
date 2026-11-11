@@ -48,6 +48,8 @@ export interface ExtractionUsage {
   input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens: number;
+  /** Absent in results recorded before v0.4. */
+  cache_creation_input_tokens?: number;
   ms: number;
 }
 

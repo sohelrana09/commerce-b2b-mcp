@@ -142,7 +142,9 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 
 **Decision.** Default Claude Opus 5.5 at medium effort, overridable with `RFQ_MODEL` and `RFQ_EFFORT`. The system prompt is frozen and cached. Server-side refusal fallbacks are on.
 
-**Next.** Measure cheaper settings (lower effort, Sonnet or Haiku) on the golden set and keep the cheapest that holds the safety number at 0 and match accuracy within a stated margin. Choose per step on measured cost per completed RFQ, not price per token.
+**Measured.** $0.078 and 39 seconds per RFQ on the golden set (about 220 output tokens and 2.3 seconds per line), within the [service targets](service-targets.md). Most of the cost is output, so it scales with lines, not with the prompt. Caching the 2,850-token system prompt saves about $0.011 per RFQ (about 12%).
+
+**Next.** The sweep (`npm run eval -- --sweep`) runs low and high effort, Sonnet and Haiku in parallel and picks the cheapest setting with 0 wrong lines marked ready, the injection noticed, and top-1 and needs-review recall within 2 points of the best. It is built but not yet run. At current volumes the saving is small; at 10,000 RFQs a month it is worth the run. Haiku has no server-side refusal fallback, so the intake does not request one there.
 
 ### 16. Evals: one number that must be zero
 

@@ -60,8 +60,8 @@ export class ClaudeExtractor implements Extractor {
       model: this.model,
       max_tokens: 16000,
       // On a safety decline, the API re-runs the request on a fallback model inside the same call.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      // Haiku has no server-side fallback, so it is not requested there.
+      ...(this.model.startsWith("claude-haiku") ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
       system: [{ type: "text", text: EXTRACTION_SYSTEM, cache_control: { type: "ephemeral" } }],
       output_config: { effort: this.effort, format: betaZodOutputFormat(Extraction) },
       messages: [{ role: "user", content }],
@@ -83,6 +83,7 @@ export class ClaudeExtractor implements Extractor {
         input_tokens: response.usage.input_tokens,
         output_tokens: response.usage.output_tokens,
         cache_read_input_tokens: response.usage.cache_read_input_tokens ?? 0,
+        cache_creation_input_tokens: response.usage.cache_creation_input_tokens ?? 0,
         ms: Date.now() - started,
       },
     };
