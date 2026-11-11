@@ -28,6 +28,8 @@ Not stored anywhere: passwords (the sign-in page passes them to the store's `gen
 - **The model only reads; it does not search, price or write.** Intake has no tools (decision 13), so RFQ text cannot reach the store through the model.
 - **Secrets never reach the audit log.** Any input key containing token, secret, password or authorization is replaced with `[redacted]`.
 - **Minimised audit mode.** With `COMMERCE_AUDIT_INPUT=shape`, free text in tool inputs (search phrases built from RFQ lines, quote names, comments and notes) is logged only as its length, for example `"[text, 35 chars]"`. SKUs, quantities, IDs and catalogue attributes stay, so the log still answers "who did what, when, to which part". Use `full` while debugging, and `shape` in production.
+- **Owner-only files.** The audit log file, the corrections log and the files `rfq-quote` writes (`--out`, `--save`) are created with mode 0600. An existing audit log that others can read is tightened to 0600 the first time the server writes to it.
+- **Inert review sheet.** Text from the RFQ is shown in the review sheet as code spans with markup and invisible characters removed, so a link, image, HTML or heading in an RFQ cannot render in the rep's Markdown viewer.
 - **Caller-scoped access.** Every call acts as one company user, so a mistake or a prompt injection can only see what that user can see (decision 1).
 - **No customer data in the JSON schema.** Structured outputs cache the schema (not the content) for up to 24 hours; the schema holds only field names.
 

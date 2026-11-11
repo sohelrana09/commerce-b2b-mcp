@@ -19,3 +19,6 @@ evals/results/*.json
 # Personal Claude Code overrides (shared settings live in .claude/settings.json)
 .claude/settings.local.json
 .claude/worktrees/
+
+# Local audit report (not committed)
+AUDIT_REPORT.md

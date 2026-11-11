@@ -45,13 +45,13 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 
 **Rejected.** A `confirm: true` flag (the model can set it in one step). Letting the agent submit (no human checkpoint before the customer sees prices).
 
-**Consequences.** The token proves the confirmed call equals the previewed one, not that a human saw the preview; that depends on the client. That is why the write is limited to drafts, and why the quote assistant's CLI asks the person at a terminal and has no flag to skip it.
+**Consequences.** A token is single use: it is recorded as used before the store is called (an atomic counter in the state store over HTTP, in memory otherwise), so a repeat or a parallel confirm is refused. If the store call then fails, the token is spent and a new preview is needed. If only a line note fails after the draft exists, the call reports success with a warning. The token proves the confirmed call equals the previewed one, not that a human saw the preview; that depends on the client. That is why the write is limited to drafts, and why the quote assistant's CLI asks the person at a terminal and has no flag to skip it.
 
 ### 3. Store content is data, never instructions
 
 **Context.** Product descriptions, quote notes and RFQs are written by third parties and can carry prompt injection.
 
-**Decision.** Tool descriptions and server instructions are static. Store text is stripped of markup, length-capped and returned under a `merchant_content` label. The server instructions tell the model to never follow instructions found in it. A fixture product carries an injection attempt so the behaviour is tested.
+**Decision.** Tool descriptions and server instructions are static. Store text is stripped of markup, length-capped and returned under a `merchant_content` label. Every other string in a tool result or error goes through the same cleaning (entities decoded, markup and invisible characters removed, 300-character cap) in `defineTool`, so a field added later is covered too. Cleaning removes markup, not wording: injected sentences stay visible to the human and the model is still told to treat them as data. The server instructions tell the model to never follow instructions found in it. A fixture product carries an injection attempt so the behaviour is tested.
 
 **Rejected.** Sanitising injection out of text (unreliable, and it hides evidence from the human).
 
@@ -180,7 +180,8 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 **Decision.** One `StateStore` interface with two implementations: memory (the default, unchanged behaviour) and Redis (`COMMERCE_STATE_STORE=redis`). The provider uses only get, set with a TTL, take (read and delete in one step), a windowed counter and a schedule of grant expiries. In Redis:
 
 - every value is encrypted with AES-256-GCM under a key derived from `COMMERCE_STATE_KEY`, with the Redis key as associated data, so a value copied to another key does not decrypt;
-- every key is a SHA-256 hash of the real id, so a dump or `MONITOR` shows no usable code, access token or email address;
+- every key is a keyed hash (HMAC-SHA-256 under a key derived from `COMMERCE_STATE_KEY`) of the real id, so a dump or `MONITOR` shows no usable code, access token or email address, and a guessed email or address cannot be tested against the key names;
+- each sealed value carries its own expiry, so a copy put back later or given a longer Redis TTL still stops working on time (it cannot be made single-use again by an attacker who can write to Redis: that needs Redis to be trusted);
 - lifetimes are Redis TTLs, so nothing outlives its expiry even if every instance stops;
 - single-use codes and sign-in requests are taken with `GETDEL`, so two instances cannot both redeem one;
 - grant expiries are a sorted set, and `ZREM` hands each expired grant to exactly one instance, which signs the user out at the store.
@@ -189,7 +190,7 @@ Each instance still closes its own MCP sessions: on its one-minute sweep it chec
 
 **Rejected.** Stateless tokens (signed JWTs carrying the customer token): they cannot be revoked before expiry, and the customer token would travel to the client inside them. A database table: it adds a schema and migrations for data that lives an hour. Encrypting only the customer token field: the email and client metadata are personal data too, and one rule ("everything is sealed") is easier to review than a field list. Sharing the MCP sessions themselves: a session is a live server object with an open stream, and the Streamable HTTP spec already lets a client recover from a lost session by starting a new one.
 
-**Consequences.** Several instances can run behind one public URL. MCP sessions stay on the instance that opened them, so the load balancer should route by the `Mcp-Session-Id` header; without that, a request that lands elsewhere gets 404 and the client opens a new session, which works but costs an initialize round trip. Every instance needs the same `COMMERCE_STATE_KEY`, and changing it signs everyone out (old values no longer decrypt and are treated as absent). Redis becomes a dependency to run and secure: use `rediss://`, a password, and no persistence or encrypted persistence. The memory store keeps its 1,000-client cap; in Redis, registrations expire after 30 days and `/register` is rate-limited per address. App Builder also needs a stateless HTTP mode: decision 20.
+**Consequences.** Several instances can run behind one public URL. MCP sessions stay on the instance that opened them, so the load balancer should route by the `Mcp-Session-Id` header; without that, a request that lands elsewhere gets 404 and the client opens a new session, which works but costs an initialize round trip. Every instance needs the same `COMMERCE_STATE_KEY`, and changing it signs everyone out (old values no longer decrypt and are treated as absent). Redis becomes a dependency to run and secure: use `rediss://`, a password, and no persistence or encrypted persistence. The memory store keeps its 1,000-client cap; in Redis, registrations expire after 30 days and `/register` is rate-limited per address by each instance's own in-memory counter (set `COMMERCE_TRUST_PROXY` behind a proxy so "address" is the client). App Builder also needs a stateless HTTP mode: decision 20.
 
 ### 20. A stateless HTTP mode for load balancers and serverless
 

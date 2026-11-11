@@ -58,6 +58,8 @@ No store and no API key are needed, and nothing is saved. You need Node 20+:
 npx -y github:sohelrana09/commerce-b2b-mcp demo
 ```
 
+That runs the current `main` branch, including its build step. To run exactly what you reviewed, pin a tag or commit: `github:sohelrana09/commerce-b2b-mcp#<commit>`.
+
 Or with Docker, without Node:
 
 ```bash
@@ -257,6 +259,8 @@ This is the part that matters most when an agent touches a live B2B store.
 2. **Read by default, propose-then-approve for writes.** A write call without a token returns a priced preview, stock warnings and a signed `confirmation_token`.
    - The token is an HMAC over the tool, the caller and the exact input. It expires after 10 minutes.
    - Changing anything after the preview invalidates it.
+   - Each token works once. A second confirm with the same token is refused, so one approval saves one draft. Over HTTP the used-token record is kept in the shared state store, so this holds across instances; with stdio it lives in the process.
+   - If a line note cannot be saved after the draft exists, the call still succeeds and returns a `warnings` entry, so a retry does not create a second quote.
    - Even when confirmed, the quote is only saved as a draft for a person to submit.
 3. **Per-tool allowlist.** Set `COMMERCE_TOOLS_ENABLED` or `COMMERCE_TOOLS_DISABLED`. Disabled tools aren't registered, so the agent never sees them. Unknown names fail at startup, so a typo can't silently enable everything.
 4. **Audit log and tracing.** One JSONL line per call, with:
@@ -267,11 +271,11 @@ This is the part that matters most when an agent touches a live B2B store.
 
    Over HTTP it also records the MCP session and OAuth client. The `trace_id` is returned in the result's `_meta`, so a user can quote it.
 5. **Store content is data.**
-   - Descriptions and notes are stripped of markup, capped in length and labelled `merchant_content`.
+   - Product descriptions are stripped of markup, capped and labelled `merchant_content`. Every other string in a tool result or error (product, list and company names, carriers, store messages) is also cleaned: entities decoded, markup, control, zero-width and Unicode tag characters removed, and capped at 300 characters.
    - Tool descriptions and server instructions are fixed text and never include store content.
    - The fixtures include a product whose description contains a prompt-injection attempt, so you can test this.
 6. **Structured errors.** Every failure has a `code`, `message`, `retryable` flag and sometimes a `hint`. So the agent can tell "fix your input" from "try again later" from "ask a human".
-7. **Context budget.** Results are paginated with a hard page-size cap. Payloads are trimmed to summaries and IDs, not full Magento entities.
+7. **Context budget.** Results are paginated with a hard page-size cap. Lists inside a single result are capped too (20 variants, 50 order lines, 100 requisition-list items, 10 price tiers per line), with a `*_total` and `*_truncated` field when something was cut. Any result over 60,000 bytes (about 15k tokens) is replaced by a `RESULT_TOO_LARGE` error. Payloads are trimmed to summaries and IDs, not full Magento entities.
 
 **Known limit of propose-then-approve.** The token proves that the confirmed call matches the previewed one. It can't prove a person saw the preview: that depends on the MCP client showing it to them. For that reason, the write tool is limited to drafts, and the server instructions tell the agent to wait for explicit approval.
 
@@ -309,16 +313,19 @@ cp .env.example .env   # fill in, then load it in your MCP client config
 ### How the adapter stays caller-scoped
 
 - **Everything company-specific uses storefront GraphQL with the company user's customer token.** That covers catalogue search and visibility, prices, company and credit, orders, requisition lists and quotes. Magento itself applies the shared catalog, customer-group and tier pricing, and company role permissions.
-- **No admin token, by design.** The server refuses to start without a customer token or password. Before every call, the adapter checks that the token's user matches `COMMERCE_CALLER_EMAIL` and is an active company member. The result is cached for 60 seconds.
+- **Permissions differ between the mock and the store.** The mock store enforces `catalog.view`, `orders.view_own`/`orders.view_all` and `requisition_lists.view` itself. The PaaS adapter enforces only `quotes.create` in the tool, and relies on Magento to scope `customer.orders` and requisition lists to the signed-in user and role. That mapping has not been checked against a live store with restricted roles (see the checklist below), so tests against the mock do not prove it.
+- **No admin token, by design.** The server refuses to start without a customer token or password. On every call, the adapter checks that the token's user matches the caller and is an active company member. The result is cached for 60 seconds, per caller, so a user who is deactivated keeps access for up to a minute.
 - **MSI quantities are the one exception.** Salable quantity and per-source stock are only exposed through the admin REST API.
   - To get them, create an integration with **only** the inventory read ACLs (`Magento_InventoryApi::source`, `Magento_InventoryApi::stock`, salable quantity) and set `COMMERCE_INVENTORY_TOKEN`.
   - The adapter first checks with the customer token that the SKU is visible to the company. Only then does it ask inventory.
+  - Per-source stock and lead times cover only the sources linked to `COMMERCE_STOCK_ID` (read from the stock-source links, which the `Magento_InventoryApi::stock` permission allows). Other warehouses are never listed.
+  - Per-source calls (two per SKU) are made only when `by_source` is set or `COMMERCE_SOURCE_LEAD_TIMES` is configured, and at most 5 inventory calls run at once.
   - Without the token, availability falls back to the storefront `stock_status` and `quantity` fields.
 - **Draft quotes never touch the buyer's open cart.**
   - Lines go into a new cart (`addProductsToNewCart`), which becomes a negotiable quote via `requestNegotiableQuote` with `is_draft: true`.
   - Line notes are added with `setLineItemNote`.
   - If the store returns any status other than `DRAFT` (older B2B versions may ignore the flag), the tool reports a warning instead of calling it a draft.
-- **Fastener attributes** come from the product name by default. If your catalogue has dedicated attributes, map them with `COMMERCE_ATTRIBUTE_MAP`; they override what the name says.
+- **Fastener attributes** come from the product name by default. If your catalogue has dedicated attributes, map them with `COMMERCE_ATTRIBUTE_MAP`; they override what the name says. Map `pack_size` (a whole number of pieces per pack) if you sell in boxes; without it the pack size is reported as unknown (`null`), and a quote line in boxes is flagged for review rather than guessed.
 
 <details>
 <summary>Verified on a live store (2.4.8-p5, B2B 1.5.2-p3)</summary>
@@ -386,10 +393,11 @@ How it works:
   - Each MCP session gets its own server instance and backend, built for its token's user.
   - A request with another user's token on an existing session is refused with 403.
   - A session only accepts the sign-in that opened it: after a new sign-in, the client is told to start a new session.
-  - Revoking a token ends its sessions and revokes the customer token at the store.
+  - Revoking a token ends its sessions and revokes the customer token at the store. If the store is unreachable the sign-out is retried twice (after 1 s and 5 s); if it still fails, a warning is logged and the store token lives until the store expires it.
 - **Phishing guard.**
   - Any app can register itself, so redirect URIs are limited to loopback and the hosts in `COMMERCE_OAUTH_REDIRECT_HOSTS`.
-  - The sign-in page names the app and where it will send the user, and it cannot be framed.
+  - The sign-in page names the app (and says the name is chosen by the app and not verified) and where it will send the user, and it cannot be framed.
+  - Registration is bounded: client names up to 100 characters, at most 5 redirect URIs, 4 KB of metadata, and 1,000 registrations a day.
   - Sign-in locks for 15 minutes after 5 failed attempts per email and address.
 - **DNS rebinding.** Requests whose `Host` is not the public host are refused.
 
@@ -402,10 +410,11 @@ How it works:
 | `COMMERCE_HTTP_TOKEN_TTL_SECONDS` | `3600` | Access token lifetime, capped at 3600 |
 | `COMMERCE_OAUTH_REDIRECT_HOSTS` | none | Extra https redirect hosts, e.g. `claude.ai` |
 | `COMMERCE_MOCK_PASSWORD` | none | Mock backend only: the demo users' password (12+ characters) |
+| `COMMERCE_TRUST_PROXY` | `0` | Number of reverse proxies in front of the server (0 to 10); makes lockout and rate limits per client |
 | `COMMERCE_HTTP_SESSIONS` | `stateful` | `stateful` (MCP sessions, sticky with several instances) or `stateless` (every request stands alone) |
 | `COMMERCE_STATE_STORE` | `memory` | `memory` (one instance) or `redis` (shared by several) |
 | `COMMERCE_REDIS_URL` | none | Redis only: `rediss://` address, with the password in it |
-| `COMMERCE_STATE_KEY` | none | Redis only: 32+ characters, the same on every instance. Encrypts what is stored |
+| `COMMERCE_STATE_KEY` | none | Redis only: 32+ characters with at least 8 different ones (use a random value), the same on every instance. Encrypts what is stored |
 | `COMMERCE_REDIS_PREFIX` | `commerce-b2b-mcp:` | Redis only: key prefix, so one Redis can serve several deployments |
 
 Over HTTP, `COMMERCE_CALLER_EMAIL`, `COMMERCE_CUSTOMER_TOKEN` and `COMMERCE_CUSTOMER_PASSWORD` must be unset. A fixed identity shared by every client is exactly what this mode exists to avoid.
@@ -422,7 +431,7 @@ COMMERCE_STATE_KEY='32+ random characters, the same on every instance'
 
 - **Any instance can serve any step.** A client can register on one instance, sign in on another and call `/mcp` on a third. Sign-in failures are counted across all of them.
 - **Revocation and expiry reach every instance.** A revoked token is refused everywhere at once. Each instance closes its own sessions for that grant within a minute, and each expired grant is signed out at the store by exactly one instance.
-- **Redis holds no readable secrets.** Every value is encrypted with AES-256-GCM, and every key is a hash of the real id. Changing `COMMERCE_STATE_KEY` signs everyone out.
+- **Redis holds no readable secrets.** Every value is encrypted with AES-256-GCM (with its own expiry sealed in), and every key is a keyed hash of the real id. Changing `COMMERCE_STATE_KEY` signs everyone out.
 - **Sessions stay where they started.** Route by the `Mcp-Session-Id` header (sticky sessions). Without that, a request that lands on another instance gets 404 and the client opens a new session. Or use stateless mode, below, which needs no sticky routing.
 
 The server checks it can reach Redis before it starts listening. Use `rediss://`: with plain `redis://` to a remote host it starts, but warns that the Redis password crosses the network in clear. The design is [decision 19](docs/decisions.md#19-shared-sign-in-state-in-redis-encrypted-for-more-than-one-instance).
@@ -440,7 +449,7 @@ The design is [decision 20](docs/decisions.md#20-a-stateless-http-mode-for-load-
 **Limits.**
 - **One instance by default.** Clients, codes and tokens are kept in memory, and a restart signs everyone out. To run several instances, use the [shared Redis store](#several-instances), with sticky sessions or [stateless mode](#stateless-mode).
 - **TLS.** Put TLS in front (a reverse proxy) for anything beyond localhost.
-- **Proxies.** Behind a proxy, the sign-in lockout counts per proxy address until trusted proxy headers are configured.
+- **Proxies.** Behind a reverse proxy, set `COMMERCE_TRUST_PROXY` to the number of proxies in front of the server (usually `1`). Without it, every user shares one sign-in lockout and one set of OAuth rate limits (the proxy's address), so one client can block sign-in for everyone. Do not set it when clients reach the server directly: they could forge `X-Forwarded-For`. The OAuth rate limits (`/token`, `/authorize`, `/register`, `/revoke`) are kept in each instance's memory, so with several instances each has its own count.
 - **Short store tokens.** If the store's customer token lifetime is shorter than the access token's, tools return `FORBIDDEN` with a hint to sign in again.
 
 ## Configuration
@@ -456,7 +465,7 @@ Settings are environment variables. `.env.example` lists them; keep the filled-i
 | `COMMERCE_AUDIT_LOG` | `stderr` | `stderr` or a file path for JSONL audit lines |
 | `COMMERCE_AUDIT_INPUT` | `full` | `full`, or `shape` to log free text in tool inputs only as its length (recommended in production) |
 | `COMMERCE_CONFIRM_SECRET` | random per process (mock only) | HMAC secret for confirmation tokens. Required outside mock mode |
-| `COMMERCE_CONFIRM_TTL_SECONDS` | `600` | Confirmation token lifetime |
+| `COMMERCE_CONFIRM_TTL_SECONDS` | `600` | Confirmation token lifetime, a whole number from 30 to 3600 |
 
 PaaS only:
 
@@ -469,7 +478,7 @@ PaaS only:
 | `COMMERCE_INVENTORY_TOKEN` | no | Least-privilege integration token for MSI read APIs |
 | `COMMERCE_STOCK_ID` | no (default `1`) | MSI stock for salable quantity |
 | `COMMERCE_SOURCE_LEAD_TIMES` | no | JSON, e.g. `{"leeds":1,"bristol":2}` |
-| `COMMERCE_ATTRIBUTE_MAP` | no | JSON from `thread`, `length_mm`, `material`, `grade`, `finish`, `head`, `part_type` to your attribute codes |
+| `COMMERCE_ATTRIBUTE_MAP` | no | JSON from `thread`, `length_mm`, `material`, `grade`, `finish`, `head`, `part_type`, `pack_size` to your attribute codes |
 | `COMMERCE_QUOTE_REVIEW_URL` | no | Storefront page where buyers review quotes, returned with each draft |
 | `COMMERCE_TIMEOUT_MS` | no (default `15000`) | Per-request timeout |
 
