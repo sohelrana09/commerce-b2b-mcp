@@ -25,9 +25,17 @@ export async function generateCustomerToken(http: HttpOptions, email: string, pa
   }
 }
 
-/** Revoke a customer token at the store. Best effort: an already-expired token is fine. */
+/**
+ * Revoke a customer token at the store. A token the store already rejects (expired or revoked) counts as done.
+ * Any other failure (store down, timeout) throws, so the caller can retry and report it.
+ */
 export async function revokeCustomerToken(http: HttpOptions, token: string): Promise<void> {
-  await graphql(http, "mutation { revokeCustomerToken { result } }", {}, token).catch(() => undefined);
+  try {
+    await graphql(http, "mutation { revokeCustomerToken { result } }", {}, token);
+  } catch (err) {
+    if (err instanceof AuthExpiredError) return;
+    throw err;
+  }
 }
 
 export class CustomerTokenProvider {

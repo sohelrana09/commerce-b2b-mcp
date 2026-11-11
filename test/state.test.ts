@@ -113,6 +113,28 @@ describe.skipIf(!REDIS_URL)("redis state store at rest", () => {
     expect(await s.get("token", "access-token-hash-xyz")).toMatchObject({ customerToken: "magento-secret" });
   });
 
+  it("hides ids with a keyed hash and refuses a sealed value after its own expiry, whatever the Redis TTL says", async () => {
+    const prefix = `test:${randomUUID()}:`;
+    let t = 1_000_000;
+    const s = new RedisStore({ url: REDIS_URL!, secret: SECRET, prefix, now: () => t });
+    opened.push(s);
+    await s.set("code", "the-code", { u: 1 }, 1_000);
+    const raw = new Redis(REDIS_URL!);
+    try {
+      const [k] = await raw.keys(`${prefix}*`);
+      // The key name is an HMAC: the plain SHA-256 of the id (what it used to be) no longer matches.
+      const { createHash } = await import("node:crypto");
+      expect(k).not.toBe(`${prefix}code:${createHash("sha256").update("the-code").digest("base64url")}`);
+      // Redis keeps it for a long time (as if an attacker re-SET it with a long TTL), but the sealed expiry has passed.
+      await raw.pexpire(k!, 600_000);
+      expect(await s.get("code", "the-code")).toMatchObject({ u: 1 });
+      t += 5_000;
+      expect(await s.get("code", "the-code")).toBeUndefined();
+    } finally {
+      raw.disconnect();
+    }
+  });
+
   it("reports an unreachable Redis with a plain message that does not echo the URL", async () => {
     const s = new RedisStore({ url: "redis://:hunter2-password@127.0.0.1:1", secret: SECRET, prefix: "x:" });
     opened.push(s);

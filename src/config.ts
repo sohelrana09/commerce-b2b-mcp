@@ -35,6 +35,11 @@ export interface HttpConfig {
    * "stateless": every POST stands alone, so any instance or a serverless function can answer it (ADR 20).
    */
   sessions: "stateful" | "stateless";
+  /**
+   * Number of reverse proxies in front of this server (Express "trust proxy" hop count). 0 = none: the socket address is the client.
+   * Set it behind a proxy, or every user shares one rate-limit and sign-in lockout bucket.
+   */
+  trustProxy: number;
 }
 
 export type StateConfig =
@@ -71,7 +76,7 @@ export interface Config {
   http?: HttpConfig;
 }
 
-const ATTRIBUTE_KEYS: AttributeKey[] = ["part_type", "head", "thread", "length_mm", "material", "grade", "finish"];
+const ATTRIBUTE_KEYS: AttributeKey[] = ["part_type", "head", "thread", "length_mm", "material", "grade", "finish", "pack_size"];
 
 function parseJson<T>(name: string, raw: string | undefined): T | undefined {
   if (!raw) return undefined;
@@ -129,8 +134,21 @@ function loadPaas(env: NodeJS.ProcessEnv, callerEmail: string, perSession: boole
     ...(leadTimes ? { sourceLeadTimes: leadTimes } : {}),
     ...(attributeMap ? { attributeMap: attributeMap as PaasOptions["attributeMap"] } : {}),
     ...(env.COMMERCE_QUOTE_REVIEW_URL ? { quoteReviewUrl: env.COMMERCE_QUOTE_REVIEW_URL } : {}),
-    timeoutMs: Number(env.COMMERCE_TIMEOUT_MS ?? 15000),
+    timeoutMs: intSetting("COMMERCE_TIMEOUT_MS", env.COMMERCE_TIMEOUT_MS, 15000, 100, 120_000),
   };
+}
+
+/** A whole number within [min, max]; anything else (text, fractions, out of range) is an error, never NaN. */
+function intSetting(name: string, raw: string | undefined, fallback: number, min: number, max: number): number {
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be a whole number from ${min} to ${max}, got "${raw}".`);
+  return n;
+}
+
+/** Length alone lets "aaaa...a" through; require some variety. Not an entropy proof, just a guard against placeholders. */
+function assertVaried(name: string, secret: string): void {
+  if (new Set(secret).size < 8) throw new Error(`${name} looks like a placeholder (fewer than 8 different characters). Use a random value, e.g. from \`openssl rand -base64 32\`.`);
 }
 
 function parseList(value: string | undefined): string[] | undefined {
@@ -168,8 +186,8 @@ function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfi
   } catch {
     throw new Error(`COMMERCE_PUBLIC_URL is not a valid URL: "${rawUrl}"`);
   }
-  if (publicUrl.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(publicUrl.hostname)) {
-    throw new Error("COMMERCE_PUBLIC_URL must use https (plain http is only allowed for localhost). Tokens and passwords cross it.");
+  if (publicUrl.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(publicUrl.hostname)) {
+    throw new Error("COMMERCE_PUBLIC_URL must use https (plain http is only allowed for localhost, 127.0.0.1 and [::1]). Tokens and passwords cross it.");
   }
   if (publicUrl.search || publicUrl.hash || publicUrl.pathname !== "/") {
     throw new Error("COMMERCE_PUBLIC_URL must be an origin with no path, query or fragment, e.g. https://mcp.example.com");
@@ -186,10 +204,20 @@ function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfi
     publicUrl,
     state: loadState(env),
     sessions: loadSessions(env.COMMERCE_HTTP_SESSIONS),
+    trustProxy: loadTrustProxy(env.COMMERCE_TRUST_PROXY),
     tokenTtlSeconds: Math.min(ttl, 3600),
     redirectHosts: parseList(env.COMMERCE_OAUTH_REDIRECT_HOSTS) ?? [],
     mockPassword,
   };
+}
+
+function loadTrustProxy(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return 0;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 10) {
+    throw new Error("COMMERCE_TRUST_PROXY must be the number of reverse proxies in front of this server (0 to 10).");
+  }
+  return n;
 }
 
 function loadSessions(raw: string | undefined): HttpConfig["sessions"] {
@@ -219,6 +247,7 @@ function loadState(env: NodeJS.ProcessEnv): StateConfig {
   if (secret.length < 32) {
     throw new Error("COMMERCE_STATE_KEY (32+ characters) is required with Redis: it encrypts the customer tokens kept there. Use the same value on every instance.");
   }
+  assertVaried("COMMERCE_STATE_KEY", secret);
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   return { kind, url: raw, secret, prefix: env.COMMERCE_REDIS_PREFIX ?? "commerce-b2b-mcp:", tls: url.protocol === "rediss:" || loopback };
 }
@@ -255,6 +284,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error("COMMERCE_CONFIRM_SECRET (32+ characters) is required outside mock mode; it signs write confirmation tokens.");
   }
 
+  if (secret && backend !== "mock") assertVaried("COMMERCE_CONFIRM_SECRET", secret); // mock mode may use a short demo value
   return {
     backend,
     transport,
@@ -263,7 +293,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     auditLog: env.COMMERCE_AUDIT_LOG ?? "stderr",
     auditInput: parseAuditInput(env.COMMERCE_AUDIT_INPUT),
     confirmSecret: secret ? Buffer.from(secret, "utf8") : randomBytes(32),
-    confirmTtlSeconds: Number(env.COMMERCE_CONFIRM_TTL_SECONDS ?? 600),
+    confirmTtlSeconds: intSetting("COMMERCE_CONFIRM_TTL_SECONDS", env.COMMERCE_CONFIRM_TTL_SECONDS, 600, 30, 3600),
     maxPageSize: 20,
     ...(backend === "paas" ? { paas: loadPaas(env, callerEmail, perSession) } : {}),
     ...(perSession ? { http: loadHttp(env, backend) } : {}),

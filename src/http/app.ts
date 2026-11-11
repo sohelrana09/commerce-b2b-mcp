@@ -10,6 +10,7 @@ import { MockBackend } from "../backend/mock/mock-backend.js";
 import { PaasBackend } from "../backend/paas/paas-backend.js";
 import type { CommerceBackend } from "../backend/types.js";
 import type { Config } from "../config.js";
+import type { TokenLedger } from "../confirm.js";
 import { createServer } from "../server.js";
 import { mockIdentity, paasIdentity } from "./identity.js";
 import { CommerceOAuthProvider, SCOPE, type IdentityProvider, type SignedInUser } from "./oauth.js";
@@ -30,6 +31,8 @@ export interface HttpAppOptions {
   /** Sign-in state. Defaults to what the config says: memory, or Redis shared between instances. */
   store?: StateStore;
   now?: () => number;
+  /** Delays between retries of a failed sign-out at the store (ms). Tests shorten it. */
+  revokeRetryMs?: number[];
 }
 
 const IDLE_MS = 30 * 60_000;
@@ -77,12 +80,18 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     resource: mcpUrl,
     tokenTtlSeconds: http.tokenTtlSeconds,
     redirectHosts: http.redirectHosts,
+    ...(opts.revokeRetryMs ? { revokeRetryMs: opts.revokeRetryMs } : {}),
     onGrantEnded: (grantId) => {
       for (const [id, s] of sessions) if (s.grantId === grantId) closeSession(id);
       backends.delete(grantId);
     },
     now,
   });
+
+  // One ledger for every server this app builds; in Redis mode it is shared by all instances.
+  const ledger: TokenLedger = {
+    claim: async (token, ttlMs) => (await provider.store.increment("confirm-used", token, ttlMs)) === 1,
+  };
 
   const backendFor = (user: SignedInUser): CommerceBackend => {
     if (shared) return shared;
@@ -99,6 +108,8 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     allowedHosts: [...new Set([http.publicUrl.hostname, ...(local.includes(http.publicUrl.hostname) ? local : [])])],
   });
   app.disable("x-powered-by");
+  // req.ip drives the sign-in lockout and the SDK's rate limits: behind a proxy it must be the client, not the proxy.
+  app.set("trust proxy", http.trustProxy);
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
@@ -127,22 +138,24 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
    * request to this instance, so a load balancer or a serverless platform can
    * send the next one anywhere. There is no GET stream and no DELETE.
    */
-  const statelessRequest = async (req: Request, res: Response, grantId: string) => {
+  const statelessRequest = async (req: Request, res: Response, grantId: string, email: string) => {
     if (req.method !== "POST") {
       res.set("Allow", "POST");
       return void rpcError(res, 405, "This server is stateless: send each request as a POST, with no session.");
     }
-    const user = await provider.userForGrant(grantId);
-    if (!user) return void rpcError(res, 401, "Sign-in has ended. Sign in again.");
+    // The bearer check has just confirmed this token is live, so a backend already built for the grant needs no second
+    // lookup. The store is read again only to build a backend (the first request, or after it idled out).
     let entry = backends.get(grantId);
     if (!entry) {
+      const user = await provider.userForGrant(grantId);
+      if (!user) return void rpcError(res, 401, "Sign-in has ended. Sign in again.");
       if (backends.size >= MAX_BACKENDS) backends.delete(backends.keys().next().value!);
       entry = { backend: backendFor(user), lastUsed: now() };
       backends.set(grantId, entry);
     }
     entry.lastUsed = now();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    const { server } = createServer({ ...config, callerEmail: user.email }, { backend: entry.backend, audit });
+    const { server } = createServer({ ...config, callerEmail: email }, { backend: entry.backend, audit, ledger });
     res.on("close", () => {
       void transport.close().catch(() => undefined);
       void server.close().catch(() => undefined);
@@ -154,7 +167,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
   app.all("/mcp", bearer, async (req: Request, res: Response) => {
     const email = String(req.auth!.extra!.email);
     const grantId = String(req.auth!.extra!.grant_id);
-    if (http.sessions === "stateless") return statelessRequest(req, res, grantId);
+    if (http.sessions === "stateless") return statelessRequest(req, res, grantId, email);
     const sid = req.header("mcp-session-id");
 
     if (sid) {
@@ -191,7 +204,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     transport.onclose = () => {
       if (transport.sessionId) sessions.delete(transport.sessionId);
     };
-    const { server } = createServer({ ...config, callerEmail: user.email }, { backend: backendFor(user), audit });
+    const { server } = createServer({ ...config, callerEmail: user.email }, { backend: backendFor(user), audit, ledger });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   });

@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 import { Redis } from "ioredis";
 
 /**
@@ -147,6 +147,8 @@ export interface RedisStoreOptions {
   prefix: string;
   /** For tests: an already-created client. */
   client?: Redis;
+  /** For tests: the clock used to check the expiry sealed into each value. */
+  now?: () => number;
 }
 
 const INCREMENT = `local n = redis.call('INCR', KEYS[1])
@@ -166,10 +168,15 @@ export class RedisStore implements StateStore {
   readonly kind = "redis" as const;
   private readonly redis: Redis;
   private readonly key: Buffer;
+  /** Keys the hashing of ids, separately from the encryption key. */
+  private readonly macKey: Buffer;
   private readonly prefix: string;
+  private readonly now: () => number;
 
   constructor(opts: RedisStoreOptions) {
     this.key = createHash("sha256").update("commerce-b2b-mcp state v1\0").update(opts.secret).digest();
+    this.macKey = createHash("sha256").update("commerce-b2b-mcp state keys v2\0").update(opts.secret).digest();
+    this.now = opts.now ?? Date.now;
     this.prefix = opts.prefix;
     this.redis =
       opts.client ??
@@ -186,18 +193,20 @@ export class RedisStore implements StateStore {
   }
 
   private k(ns: string, key: string): string {
-    return `${this.prefix}${ns}:${createHash("sha256").update(key).digest("base64url")}`;
+    // Keyed, so someone who can read Redis cannot test a guessed email, address or id against the key names.
+    return `${this.prefix}${ns}:${createHmac("sha256", this.macKey).update(`${ns}\0${key}`).digest("base64url")}`;
   }
 
   private z(ns: string): string {
     return `${this.prefix}schedule:${ns}`;
   }
 
-  private seal(redisKey: string, value: unknown): string {
+  /** The value is sealed together with its own expiry, so a copy put back later, or with a longer Redis TTL, still dies on time. */
+  private seal(redisKey: string, value: unknown, ttlMs: number): string {
     const iv = randomBytes(12);
     const c = createCipheriv("aes-256-gcm", this.key, iv);
     c.setAAD(Buffer.from(redisKey));
-    const body = Buffer.concat([c.update(JSON.stringify(value), "utf8"), c.final()]);
+    const body = Buffer.concat([c.update(JSON.stringify({ e: this.now() + ttlMs, v: value }), "utf8"), c.final()]);
     return Buffer.concat([iv, c.getAuthTag(), body]).toString("base64");
   }
 
@@ -208,7 +217,8 @@ export class RedisStore implements StateStore {
       const d = createDecipheriv("aes-256-gcm", this.key, raw.subarray(0, 12));
       d.setAAD(Buffer.from(redisKey));
       d.setAuthTag(raw.subarray(12, 28));
-      return JSON.parse(Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString("utf8")) as T;
+      const env = JSON.parse(Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString("utf8")) as { e: number; v: T };
+      return typeof env.e === "number" && env.e >= this.now() ? env.v : undefined;
     } catch {
       // Written with another COMMERCE_STATE_KEY, or tampered with: treat as absent, never as trusted.
       return undefined;
@@ -222,7 +232,7 @@ export class RedisStore implements StateStore {
 
   async set(ns: string, key: string, value: unknown, ttlMs: number): Promise<void> {
     const k = this.k(ns, key);
-    await this.redis.set(k, this.seal(k, value), "PX", Math.max(1, Math.ceil(ttlMs)));
+    await this.redis.set(k, this.seal(k, value, ttlMs), "PX", Math.max(1, Math.ceil(ttlMs)));
   }
 
   async take<T>(ns: string, key: string): Promise<T | undefined> {

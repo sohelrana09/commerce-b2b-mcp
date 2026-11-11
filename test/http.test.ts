@@ -352,6 +352,26 @@ describe("Stateless HTTP mode", () => {
     expect(b.backends.size).toBe(1);
   });
 
+  it("reads the sign-in state once per request after the first (the bearer check), not three times", async () => {
+    class CountingStore extends MemoryStore {
+      reads = 0;
+      override async get<T>(ns: string, key: string): Promise<T | undefined> {
+        this.reads++;
+        return super.get<T>(ns, key);
+      }
+    }
+    const store = new CountingStore();
+    const h = await start(STATELESS, { store });
+    const { token } = await tokenFor(h.base, h.mcpUrl.href);
+    store.reads = 0;
+    await rpc(h.base, token, "tools/list");
+    const first = store.reads;
+    store.reads = 0;
+    await rpc(h.base, token, "tools/list");
+    expect(first).toBe(3); // bearer check, then the grant and the user to build the backend
+    expect(store.reads).toBe(1); // bearer check only
+  });
+
   it("refuses a revoked token on every instance and drops its backend", async () => {
     const store = new MemoryStore();
     const a = await start(STATELESS, { store });
@@ -413,14 +433,14 @@ describe("HTTP config", () => {
     expect(() => loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "http://:pw-secret@x", COMMERCE_STATE_KEY: "k".repeat(32) })).toThrow(/redis:\/\//);
     expect(() => loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "not a url :pw-secret", COMMERCE_STATE_KEY: "k".repeat(32) })).toThrow(/^(?!.*pw-secret)/);
     expect(() => loadConfig({ ...http, COMMERCE_REDIS_URL: "redis://localhost:6379" })).toThrow(/COMMERCE_STATE_STORE/);
-    const key = "k".repeat(32);
+    const key = "state-test-key-0123456789-abcdefghij";
     expect(loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "redis://localhost:6379", COMMERCE_STATE_KEY: key }).http!.state).toMatchObject({ kind: "redis", tls: true });
     expect(loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "redis://cache.internal:6379", COMMERCE_STATE_KEY: key }).http!.state).toMatchObject({ tls: false });
     expect(loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "rediss://cache.example.com:6380", COMMERCE_STATE_KEY: key }).http!.state).toMatchObject({ tls: true, prefix: "commerce-b2b-mcp:" });
   });
 
   it("does not need customer credentials for paas over HTTP", () => {
-    const c = loadConfig({ COMMERCE_BACKEND: "paas", COMMERCE_TRANSPORT: "http", COMMERCE_BASE_URL: "https://store.example.com", COMMERCE_CONFIRM_SECRET: "x".repeat(32) });
+    const c = loadConfig({ COMMERCE_BACKEND: "paas", COMMERCE_TRANSPORT: "http", COMMERCE_BASE_URL: "https://store.example.com", COMMERCE_CONFIRM_SECRET: "paas-test-confirm-secret-0123456789" });
     expect(c.paas!.auth).toBeUndefined();
   });
 });
@@ -452,5 +472,124 @@ describe("PaaS sign-in", () => {
   it("refuses bad credentials", async () => {
     const store = fakeStore({ Login: () => ({ body: { errors: [{ message: "The account sign-in was incorrect", extensions: { category: "graphql-authentication" } }] } }) });
     await expect(paasIdentity(opts(store)).signIn(JANE, "bad")).rejects.toThrow(/rejected/);
+  });
+});
+
+describe("token endpoint strictness", () => {
+  async function codeFor() {
+    const { base, mcpUrl } = await start();
+    const { body } = await register(base);
+    const { login, verifier } = await signIn(base, body.client_id, SAM, PASSWORD, mcpUrl.href);
+    const code = new URL(login.headers.get("location")!).searchParams.get("code")!;
+    const exchange = (o: Record<string, string>) =>
+      fetch(`${base}/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: form({ grant_type: "authorization_code", code, client_id: body.client_id, ...o }),
+      });
+    return { exchange, verifier };
+  }
+
+  it("spends the code on a wrong code_verifier, so it cannot be guessed at", async () => {
+    const { exchange, verifier } = await codeFor();
+    const bad = await exchange({ code_verifier: "a".repeat(43), redirect_uri: REDIRECT });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toBe("invalid_grant");
+    const retry = await exchange({ code_verifier: verifier, redirect_uri: REDIRECT });
+    expect(retry.status).toBe(400);
+  });
+
+  it("requires redirect_uri to repeat the authorization request's", async () => {
+    const { exchange, verifier } = await codeFor();
+    const res = await exchange({ code_verifier: verifier });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_grant");
+  });
+
+  it("still issues a token for the right verifier and redirect_uri", async () => {
+    const { exchange, verifier } = await codeFor();
+    const res = await exchange({ code_verifier: verifier, redirect_uri: REDIRECT });
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("numeric and secret settings", () => {
+  const base = { COMMERCE_BACKEND: "mock" };
+  it("rejects non-numeric, fractional and out-of-range numbers", () => {
+    expect(() => loadConfig({ ...base, COMMERCE_CONFIRM_TTL_SECONDS: "ten minutes" })).toThrow(/COMMERCE_CONFIRM_TTL_SECONDS/);
+    expect(() => loadConfig({ ...base, COMMERCE_CONFIRM_TTL_SECONDS: "-5" })).toThrow(/COMMERCE_CONFIRM_TTL_SECONDS/);
+    expect(() => loadConfig({ ...base, COMMERCE_CONFIRM_TTL_SECONDS: "1.5" })).toThrow(/COMMERCE_CONFIRM_TTL_SECONDS/);
+    expect(loadConfig({ ...base, COMMERCE_CONFIRM_TTL_SECONDS: "120" }).confirmTtlSeconds).toBe(120);
+    const paas = { COMMERCE_BACKEND: "paas", COMMERCE_BASE_URL: "https://store.example.com", COMMERCE_CUSTOMER_TOKEN: "t", COMMERCE_CALLER_EMAIL: "a@b.example", COMMERCE_CONFIRM_SECRET: "paas-test-confirm-secret-0123456789" };
+    expect(() => loadConfig({ ...paas, COMMERCE_TIMEOUT_MS: "abc" })).toThrow(/COMMERCE_TIMEOUT_MS/);
+    expect(() => loadConfig({ ...paas, COMMERCE_TIMEOUT_MS: "5" })).toThrow(/COMMERCE_TIMEOUT_MS/);
+    expect(loadConfig(paas).paas!.timeoutMs).toBe(15000);
+  });
+  it("rejects placeholder secrets and accepts [::1] as a public URL", () => {
+    expect(() => loadConfig({ COMMERCE_BACKEND: "paas", COMMERCE_BASE_URL: "https://store.example.com", COMMERCE_CUSTOMER_TOKEN: "t", COMMERCE_CALLER_EMAIL: "a@b.example", COMMERCE_CONFIRM_SECRET: "a".repeat(40) })).toThrow(/placeholder/);
+    const http = { ...base, COMMERCE_TRANSPORT: "http", COMMERCE_MOCK_PASSWORD: "demo-password-123" };
+    expect(() => loadConfig({ ...http, COMMERCE_STATE_STORE: "redis", COMMERCE_REDIS_URL: "redis://localhost:6379", COMMERCE_STATE_KEY: "k".repeat(40) })).toThrow(/placeholder/);
+    expect(loadConfig({ ...http, COMMERCE_PUBLIC_URL: "http://[::1]:3000" }).http!.publicUrl.hostname).toBe("[::1]");
+  });
+});
+
+describe("sign-out at the store and client registration limits", () => {
+  it("retries a failed sign-out at the store when a token is revoked", async () => {
+    let calls = 0;
+    const base = mockIdentity(PASSWORD);
+    const identity = {
+      signIn: base.signIn,
+      signOut: async () => {
+        if (++calls < 3) throw new Error("store down");
+      },
+    };
+    const s = await start({}, { identity, revokeRetryMs: [1, 1] });
+    const { token, clientId } = await tokenFor(s.base, s.mcpUrl.href);
+    const res = await fetch(`${s.base}/revoke`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form({ token, client_id: clientId }),
+    });
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(calls).toBe(3);
+  });
+
+  it("revokeCustomerToken throws when the store is down but accepts an already-rejected token", async () => {
+    const { revokeCustomerToken } = await import("../src/backend/paas/auth.js");
+    const http = (status: number) => ({
+      baseUrl: "https://s.test",
+      storeCode: undefined,
+      timeoutMs: 1000,
+      fetch: async () => new Response("{}", { status }),
+    });
+    await expect(revokeCustomerToken(http(503), "t")).rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
+    await expect(revokeCustomerToken(http(401), "t")).resolves.toBeUndefined();
+  });
+
+  it("refuses oversized client metadata, many redirect URIs, and a flood of registrations", async () => {
+    const s = await start();
+    const post = (o: object) =>
+      fetch(`${s.base}/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: [REDIRECT], token_endpoint_auth_method: "none", ...o }) });
+    expect((await post({ client_name: "n".repeat(101) })).status).toBe(400);
+    expect((await post({ redirect_uris: Array.from({ length: 6 }, () => REDIRECT) })).status).toBe(400);
+    expect((await post({ logo_uri: "https://x.example/" + "a".repeat(5000) })).status).toBe(400);
+    const store = s.provider.clientsStore;
+    let refused = 0;
+    for (let i = 0; i < 1005; i++) {
+      try {
+        await store.registerClient!({ redirect_uris: [new URL(REDIRECT)] } as never);
+      } catch {
+        refused++;
+      }
+    }
+    expect(refused).toBeGreaterThanOrEqual(1);
+  });
+
+  it("tells the user the app's name is not verified", async () => {
+    const s = await start();
+    const { body } = await register(s.base);
+    const { html } = await signIn(s.base, body.client_id, SAM, "wrong", s.mcpUrl.href);
+    expect(html).toContain("not verified");
   });
 });

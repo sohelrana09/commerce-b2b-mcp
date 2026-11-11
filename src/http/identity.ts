@@ -33,7 +33,7 @@ export function paasIdentity(opts: Omit<PaasOptions, "auth">): IdentityProvider 
         const ctx = await new PaasBackend({ ...opts, auth: { kind: "static", token } }).getCompanyContext({ email });
         return { email: ctx.user.email, customerToken: token };
       } catch (err) {
-        await revokeCustomerToken(http, token);
+        await revokeCustomerToken(http, token).catch(() => undefined); // keep the original reason for refusing
         throw err;
       }
     },
