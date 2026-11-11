@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { z } from "zod";
@@ -5,6 +6,7 @@ import type { AuditSink } from "../audit.js";
 import type { Caller, CommerceBackend } from "../backend/types.js";
 import type { Config, ToolName } from "../config.js";
 import { asToolError } from "../errors.js";
+import { runTraced, type Trace } from "../trace.js";
 
 export interface ToolDeps {
   backend: CommerceBackend;
@@ -52,16 +54,17 @@ export function defineTool<Shape extends z.ZodRawShape>(server: McpServer, deps:
     { title: spec.title, description: spec.description, inputSchema: spec.input, annotations: spec.annotations },
     // The SDK's generic callback type does not narrow through our own generic; the
     // input has already been validated against `spec.input` when this runs.
-    (async (args: z.infer<z.ZodObject<Shape>>) => {
+    (async (args: z.infer<z.ZodObject<Shape>>, extra: { sessionId?: string; authInfo?: { clientId: string } }) => {
       const started = Date.now();
+      const trace: Trace = { trace_id: randomUUID(), upstream: { calls: 0, ms: 0, errors: 0 } };
       let result: CallToolResult;
       let errorCode: string | undefined;
       try {
-        result = toResult(await spec.handler(args, deps));
+        result = toResult(await runTraced(trace, () => spec.handler(args, deps)));
       } catch (err) {
         const te = asToolError(err);
         errorCode = te.code;
-        if (te.code === "INTERNAL") process.stderr.write(`[commerce-b2b-mcp] ${spec.name} failed: ${String(err)}\n`);
+        if (te.code === "INTERNAL") process.stderr.write(`[commerce-b2b-mcp] ${spec.name} failed (trace ${trace.trace_id}): ${String(err)}\n`);
         result = toResult(te.toJSON(), true);
       }
       const text = result.content[0]?.type === "text" ? result.content[0].text : "";
@@ -75,8 +78,13 @@ export function defineTool<Shape extends z.ZodRawShape>(server: McpServer, deps:
         ...(errorCode ? { error_code: errorCode } : {}),
         result_bytes: Buffer.byteLength(text, "utf8"),
         duration_ms: Date.now() - started,
+        trace_id: trace.trace_id,
+        ...(extra?.sessionId ? { session_id: extra.sessionId } : {}),
+        ...(extra?.authInfo ? { client_id: extra.authInfo.clientId } : {}),
+        upstream: trace.upstream,
       });
-      return result;
+      // The trace id lets a user or support quote one call; it carries no data.
+      return { ...result, _meta: { trace_id: trace.trace_id } };
     }) as never,
   );
   return true;

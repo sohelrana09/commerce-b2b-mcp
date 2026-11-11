@@ -1,4 +1,5 @@
 import { ToolError } from "../../errors.js";
+import { recordUpstream } from "../../trace.js";
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -22,9 +23,13 @@ const log = (msg: string) => process.stderr.write(`[commerce-b2b-mcp] ${msg}\n`)
 async function send(opts: HttpOptions, url: string, init: RequestInit): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
+  const started = Date.now();
   try {
-    return await opts.fetch(url, { ...init, signal: ctrl.signal });
+    const res = await opts.fetch(url, { ...init, signal: ctrl.signal });
+    recordUpstream(Date.now() - started, !res.ok);
+    return res;
   } catch (err) {
+    recordUpstream(Date.now() - started, true);
     const timedOut = (err as Error)?.name === "AbortError";
     log(`${init.method ?? "GET"} ${new URL(url).pathname} ${timedOut ? "timed out" : `failed: ${String(err)}`}`);
     throw new ToolError(

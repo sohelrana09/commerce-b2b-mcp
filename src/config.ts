@@ -16,9 +16,26 @@ export const ALL_TOOLS = [
 
 export type ToolName = (typeof ALL_TOOLS)[number];
 
+export interface HttpConfig {
+  host: string;
+  port: number;
+  /** Public base URL: OAuth issuer, and the MCP endpoint is `${publicUrl}/mcp`. */
+  publicUrl: URL;
+  /** Access token lifetime. Capped at one hour (the default Magento customer token lifetime). */
+  tokenTtlSeconds: number;
+  /** Hosts an OAuth client may redirect to after sign-in. Loopback is always allowed. */
+  redirectHosts: string[];
+  /** Mock backend only: the shared demo password for fixture users. */
+  mockPassword: string;
+}
+
 export interface Config {
   backend: "mock" | "paas";
-  /** Identity the stdio server acts as. Every call is scoped to this company user. */
+  transport: "stdio" | "http";
+  /**
+   * stdio: the one company user the server acts as. Every call is scoped to them.
+   * http: empty; each session acts as the user its OAuth token was issued to.
+   */
   callerEmail: string;
   enabledTools: ReadonlySet<ToolName>;
   /** "stderr" or a file path for the JSONL audit log. */
@@ -26,8 +43,10 @@ export interface Config {
   confirmSecret: Buffer;
   confirmTtlSeconds: number;
   maxPageSize: number;
-  /** Present when backend is "paas". */
-  paas?: Omit<PaasOptions, "fetch">;
+  /** Present when backend is "paas". `auth` is absent over HTTP: each session brings its own customer token. */
+  paas?: Omit<PaasOptions, "fetch" | "auth"> & { auth?: PaasOptions["auth"] };
+  /** Present when transport is "http". */
+  http?: HttpConfig;
 }
 
 const ATTRIBUTE_KEYS: AttributeKey[] = ["part_type", "head", "thread", "length_mm", "material", "grade", "finish"];
@@ -45,7 +64,7 @@ function isLocalDevHost(host: string): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".test") || host.endsWith(".localhost");
 }
 
-function loadPaas(env: NodeJS.ProcessEnv, callerEmail: string): Omit<PaasOptions, "fetch"> {
+function loadPaas(env: NodeJS.ProcessEnv, callerEmail: string, perSession: boolean): NonNullable<Config["paas"]> {
   const raw = env.COMMERCE_BASE_URL;
   if (!raw) throw new Error("COMMERCE_BASE_URL is required for the paas backend, e.g. https://store.example.com");
   let url: URL;
@@ -60,7 +79,7 @@ function loadPaas(env: NodeJS.ProcessEnv, callerEmail: string): Omit<PaasOptions
 
   const token = env.COMMERCE_CUSTOMER_TOKEN;
   const password = env.COMMERCE_CUSTOMER_PASSWORD;
-  if (!token && !password) {
+  if (!perSession && !token && !password) {
     throw new Error(
       "Set COMMERCE_CUSTOMER_TOKEN (preferred) or COMMERCE_CUSTOMER_PASSWORD for the company user. Admin tokens are not supported by design.",
     );
@@ -82,7 +101,7 @@ function loadPaas(env: NodeJS.ProcessEnv, callerEmail: string): Omit<PaasOptions
   return {
     baseUrl: url.origin + url.pathname.replace(/\/+$/, ""),
     ...(env.COMMERCE_STORE_CODE ? { storeCode: env.COMMERCE_STORE_CODE } : {}),
-    auth: token ? { kind: "static", token } : { kind: "password", email: callerEmail, password: password! },
+    ...(perSession ? {} : { auth: token ? { kind: "static" as const, token } : { kind: "password" as const, email: callerEmail, password: password! } }),
     ...(env.COMMERCE_INVENTORY_TOKEN ? { inventoryToken: env.COMMERCE_INVENTORY_TOKEN } : {}),
     ...(stockId !== undefined ? { stockId } : {}),
     ...(leadTimes ? { sourceLeadTimes: leadTimes } : {}),
@@ -116,14 +135,57 @@ function resolveTools(enabled?: string[], disabled?: string[]): Set<ToolName> {
   return new Set(ALL_TOOLS.filter((t) => !off.has(t)));
 }
 
+function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfig {
+  const host = env.COMMERCE_HTTP_HOST ?? "127.0.0.1";
+  const port = Number(env.COMMERCE_HTTP_PORT ?? 3000);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("COMMERCE_HTTP_PORT must be a port number.");
+  const rawUrl = env.COMMERCE_PUBLIC_URL ?? `http://localhost:${port}`;
+  let publicUrl: URL;
+  try {
+    publicUrl = new URL(rawUrl);
+  } catch {
+    throw new Error(`COMMERCE_PUBLIC_URL is not a valid URL: "${rawUrl}"`);
+  }
+  if (publicUrl.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(publicUrl.hostname)) {
+    throw new Error("COMMERCE_PUBLIC_URL must use https (plain http is only allowed for localhost). Tokens and passwords cross it.");
+  }
+  if (publicUrl.search || publicUrl.hash || publicUrl.pathname !== "/") {
+    throw new Error("COMMERCE_PUBLIC_URL must be an origin with no path, query or fragment, e.g. https://mcp.example.com");
+  }
+  const ttl = Number(env.COMMERCE_HTTP_TOKEN_TTL_SECONDS ?? 3600);
+  if (!(ttl >= 60)) throw new Error("COMMERCE_HTTP_TOKEN_TTL_SECONDS must be at least 60.");
+  const mockPassword = env.COMMERCE_MOCK_PASSWORD ?? "";
+  if (backend === "mock" && mockPassword.length < 12) {
+    throw new Error("COMMERCE_MOCK_PASSWORD (12+ characters) is required for the mock backend over HTTP: it is the demo users' sign-in password.");
+  }
+  return {
+    host,
+    port,
+    publicUrl,
+    tokenTtlSeconds: Math.min(ttl, 3600),
+    redirectHosts: parseList(env.COMMERCE_OAUTH_REDIRECT_HOSTS) ?? [],
+    mockPassword,
+  };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const backend = (env.COMMERCE_BACKEND ?? "mock") as Config["backend"];
   if (backend !== "mock" && backend !== "paas") {
     throw new Error(`COMMERCE_BACKEND must be "mock" or "paas", got "${backend}"`);
   }
+  const transport = (env.COMMERCE_TRANSPORT ?? "stdio") as Config["transport"];
+  if (transport !== "stdio" && transport !== "http") {
+    throw new Error(`COMMERCE_TRANSPORT must be "stdio" or "http", got "${transport}"`);
+  }
+  const perSession = transport === "http";
+  if (perSession && (env.COMMERCE_CALLER_EMAIL || env.COMMERCE_CUSTOMER_TOKEN || env.COMMERCE_CUSTOMER_PASSWORD)) {
+    throw new Error(
+      "Over HTTP each user signs in with OAuth. Unset COMMERCE_CALLER_EMAIL, COMMERCE_CUSTOMER_TOKEN and COMMERCE_CUSTOMER_PASSWORD so no fixed identity is shared by every client.",
+    );
+  }
 
-  const callerEmail = env.COMMERCE_CALLER_EMAIL ?? (backend === "mock" ? "jane.buyer@northwind.example" : "");
-  if (!callerEmail) {
+  const callerEmail = perSession ? "" : (env.COMMERCE_CALLER_EMAIL ?? (backend === "mock" ? "jane.buyer@northwind.example" : ""));
+  if (!perSession && !callerEmail) {
     throw new Error("COMMERCE_CALLER_EMAIL is required: the server always acts as one company user, never as admin.");
   }
 
@@ -134,13 +196,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   return {
     backend,
+    transport,
     callerEmail,
     enabledTools: resolveTools(parseList(env.COMMERCE_TOOLS_ENABLED), parseList(env.COMMERCE_TOOLS_DISABLED)),
     auditLog: env.COMMERCE_AUDIT_LOG ?? "stderr",
     confirmSecret: secret ? Buffer.from(secret, "utf8") : randomBytes(32),
     confirmTtlSeconds: Number(env.COMMERCE_CONFIRM_TTL_SECONDS ?? 600),
     maxPageSize: 20,
-    ...(backend === "paas" ? { paas: loadPaas(env, callerEmail) } : {}),
+    ...(backend === "paas" ? { paas: loadPaas(env, callerEmail, perSession) } : {}),
+    ...(perSession ? { http: loadHttp(env, backend) } : {}),
   };
 }
 

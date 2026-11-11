@@ -14,7 +14,7 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 | 8 | [Target the schema common to 2.4.7 to 2.4.9](#8-target-the-schema-common-to-247-to-249) | Compatibility |
 | 9 | [Draft quotes in a separate cart, and restore the buyer's cart on failure](#9-draft-quotes-in-a-separate-cart-and-restore-the-buyers-cart-on-failure) | Side effects |
 | 10 | [Fall back to name search when full-text search returns nothing](#10-fall-back-to-name-search-when-full-text-search-returns-nothing) | Resilience |
-| 11 | [stdio first; remote transport later](#11-stdio-first-remote-transport-later) | Delivery |
+| 11 | [Remote transport: OAuth where each token is one company user](#11-remote-transport-oauth-where-each-token-is-one-company-user) | Delivery, security |
 | 12 | [The quote assistant is a workflow, not an agent](#12-the-quote-assistant-is-a-workflow-not-an-agent) | Solution design |
 | 13 | [RFQ intake: structured outputs, no tools, injection reported](#13-rfq-intake-structured-outputs-no-tools-injection-reported) | Safety, prompting |
 | 14 | [A line is ready only on an exact, unique, stocked, priced match](#14-a-line-is-ready-only-on-an-exact-unique-stocked-priced-match) | Human in the loop |
@@ -32,7 +32,7 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 
 **Rejected.** An admin token with filtering in the server: one bug in our filter leaks another company's data. A per-tool admin ACL: still one credential for all companies.
 
-**Consequences.** The blast radius of a prompt-injected or confused agent is one company user's own permissions. Cross-company actions (a rep working for many customers) need one server instance per customer, or OAuth mapping each token to a user (see 11). Another company's order returns the same `NOT_FOUND` as a missing one, so existence is not leaked.
+**Consequences.** The blast radius of a prompt-injected or confused agent is one company user's own permissions. Over HTTP each OAuth token is one company user (see 11). Cross-company work (a rep acting for many customers) means one sign-in per customer account. Another company's order returns the same `NOT_FOUND` as a missing one, so existence is not leaked.
 
 ### 2. Writes are propose-then-approve, and only ever drafts
 
@@ -102,11 +102,15 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 
 **Consequences.** The tool keeps working on a store with a broken index. The store's own search should still be fixed; this is a fallback, not a substitute.
 
-### 11. stdio first; remote transport later
+### 11. Remote transport: OAuth where each token is one company user
 
-**Decision.** v0.x ships stdio only. Streamable HTTP with OAuth comes next, with each OAuth token mapped to one company user so decision 1 still holds.
+**Context.** v0.1 to v0.3 shipped stdio only: one process, one fixed company user, on the user's machine. A hosted server shared by many users needs to know who each request is for, without weakening decision 1.
 
-**Rejected.** Shipping HTTP with a shared API key: one key for many users breaks caller scoping and auditing.
+**Decision.** Streamable HTTP, with the server as its own OAuth 2.1 authorization server (dynamic registration, PKCE, revocation, protected-resource metadata). The user signs in with their store credentials on our page; on PaaS the store checks them (`generateCustomerToken`) and we confirm an active company membership before issuing anything. Each access token is opaque, stored as a hash, bound to the `/mcp` resource and to one company user, and lives at most an hour. Each MCP session gets its own server and backend for that user; another user's token on the session is refused, and a session only accepts the sign-in that opened it. The Magento customer token stays server-side, never in `AuthInfo`. Redirect URIs are limited to loopback and configured hosts. A fixed caller in the environment is rejected in this mode.
+
+**Rejected.** A shared API key (one key for many users breaks caller scoping and auditing). Passing the Magento customer token through as the bearer token (it would reach the client and every proxy log, and could not be bound to this resource or revoked by us). Refresh tokens (the store session lasts an hour anyway; signing in again is simpler and re-checks company membership). Delegating to Adobe IMS now (the right answer for ACCS, not for PaaS customer accounts).
+
+**Consequences.** Decision 1 holds over the network: the blast radius is still one company user. State is in memory, so this is single-instance; more instances or App Builder need a shared token store. Each tool call gets a `trace_id` (returned in `_meta`) and the audit line records the session, OAuth client and the store requests the call made, so a slow or failed call can be traced to one user, one session and the store.
 
 ### 12. The quote assistant is a workflow, not an agent
 

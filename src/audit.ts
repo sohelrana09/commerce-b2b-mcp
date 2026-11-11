@@ -10,6 +10,14 @@ export interface AuditEntry {
   error_code?: string;
   result_bytes: number;
   duration_ms: number;
+  /** Unique per tool call; also returned to the client in the result's _meta. */
+  trace_id?: string;
+  /** MCP session (HTTP transport only). */
+  session_id?: string;
+  /** OAuth client that holds the token (HTTP transport only). */
+  client_id?: string;
+  /** Store requests made by this call: count, total time, failures. */
+  upstream?: { calls: number; ms: number; errors: number };
 }
 
 export interface AuditSink {

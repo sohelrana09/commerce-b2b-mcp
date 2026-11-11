@@ -120,6 +120,16 @@ const CONTEXT_TTL_MS = 60_000;
  * MSI stock data, made with a separate least-privilege integration token and
  * only for SKUs the customer query has already shown are visible.
  */
+/** Connection settings for the store, shared by the backend and the OAuth sign-in. */
+export function paasHttp(opts: Omit<PaasOptions, "auth">): HttpOptions {
+  return {
+    baseUrl: opts.baseUrl.replace(/\/+$/, ""),
+    storeCode: opts.storeCode,
+    timeoutMs: opts.timeoutMs ?? 15_000,
+    fetch: opts.fetch ?? ((url, init) => fetch(url, init)),
+  };
+}
+
 export class PaasBackend implements CommerceBackend {
   readonly name = "paas";
   private readonly http: HttpOptions;
@@ -129,12 +139,7 @@ export class PaasBackend implements CommerceBackend {
   private sourceNames: Map<string, string> | null = null;
 
   constructor(private readonly opts: PaasOptions) {
-    this.http = {
-      baseUrl: opts.baseUrl.replace(/\/+$/, ""),
-      storeCode: opts.storeCode,
-      timeoutMs: opts.timeoutMs ?? 15_000,
-      fetch: opts.fetch ?? ((url, init) => fetch(url, init)),
-    };
+    this.http = paasHttp(opts);
     this.tokens = new CustomerTokenProvider(this.http, opts.auth);
     this.withAttrs = Object.keys(opts.attributeMap ?? {}).length > 0;
   }

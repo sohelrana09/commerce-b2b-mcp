@@ -8,7 +8,27 @@ import { AuthExpiredError, graphql, type HttpOptions } from "./http.js";
  * - `password`: exchanges email + password with generateCustomerToken, and
  *   fetches a fresh token when the store reports the old one expired.
  */
-export type CustomerAuth = { kind: "static"; token: string } | { kind: "password"; email: string; password: string };
+export type CustomerAuth =
+  | { kind: "static"; token: string; /** Shown when the token stops working. */ expiredHint?: string }
+  | { kind: "password"; email: string; password: string };
+
+const LOGIN = "mutation Login($email: String!, $password: String!) { generateCustomerToken(email: $email, password: $password) { token } }";
+
+/** Exchange a company user's email and password for a customer token. Throws FORBIDDEN on bad credentials. */
+export async function generateCustomerToken(http: HttpOptions, email: string, password: string): Promise<string> {
+  try {
+    const data = await graphql<{ generateCustomerToken: { token: string } }>(http, LOGIN, { email, password }, null);
+    return data.generateCustomerToken.token;
+  } catch (err) {
+    if (err instanceof ToolError && err.code !== "INVALID_INPUT" && err.code !== "FORBIDDEN") throw err;
+    throw new ToolError("FORBIDDEN", "The store rejected the company user's credentials.");
+  }
+}
+
+/** Revoke a customer token at the store. Best effort: an already-expired token is fine. */
+export async function revokeCustomerToken(http: HttpOptions, token: string): Promise<void> {
+  await graphql(http, "mutation { revokeCustomerToken { result } }", {}, token).catch(() => undefined);
+}
 
 export class CustomerTokenProvider {
   private token: string | null;
@@ -25,21 +45,10 @@ export class CustomerTokenProvider {
       throw new ToolError(
         "FORBIDDEN",
         "The customer token has expired or was revoked.",
-        "Issue a new customer token and update COMMERCE_CUSTOMER_TOKEN.",
+        this.auth.expiredHint ?? "Issue a new customer token and update COMMERCE_CUSTOMER_TOKEN.",
       );
     }
-    try {
-      const data = await graphql<{ generateCustomerToken: { token: string } }>(
-        this.http,
-        "mutation Login($email: String!, $password: String!) { generateCustomerToken(email: $email, password: $password) { token } }",
-        { email: this.auth.email, password: this.auth.password },
-        null,
-      );
-      return data.generateCustomerToken.token;
-    } catch (err) {
-      if (err instanceof ToolError && err.code !== "INVALID_INPUT" && err.code !== "FORBIDDEN") throw err;
-      throw new ToolError("FORBIDDEN", "The store rejected the company user's credentials.");
-    }
+    return generateCustomerToken(this.http, this.auth.email, this.auth.password);
   }
 
   /** Run `fn` with a valid token, re-authenticating once if the token expired. */

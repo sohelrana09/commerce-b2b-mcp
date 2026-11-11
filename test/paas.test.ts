@@ -73,6 +73,15 @@ describe("company context and identity", () => {
     expect(store.calls[0]!.headers).toMatchObject({ Authorization: "Bearer cust-token-1", Store: "uk_b2b" });
   });
 
+  it("records store calls and timing per tool call in the audit log", async () => {
+    const store = fakeStore({ CompanyContext: ctx, CompanyCredit: () => ({ body: { data: { company: null } } }) });
+    const { call, audit } = await connectPaas(store);
+    await call("get_company_context");
+    const entry = audit.entries.at(-1)!;
+    expect(entry.trace_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(entry.upstream).toMatchObject({ calls: 2, errors: 0 });
+  });
+
   it("gives the company admin every permission", async () => {
     const store = fakeStore({ CompanyContext: () => companyContextReply({ admin: true, acl: [] }), CompanyCredit: () => ({ body: { data: { company: null } } }) });
     const { call } = await connectPaas(store);

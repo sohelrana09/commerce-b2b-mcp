@@ -4,7 +4,7 @@ An MCP server that lets an AI agent work as a **B2B buyer's assistant or a sales
 
 It is built for the B2B layer that generic Magento MCP servers leave out: company accounts, shared catalogs, negotiable quotes, requisition lists and MSI salable quantity. It is designed to run against both Adobe Commerce PaaS and Adobe Commerce as a Cloud Service (ACCS).
 
-> **Status: v0.3.** Mock mode and an Adobe Commerce PaaS adapter (2.4.7+ with B2B), verified end to end on a live **Adobe Commerce 2.4.8-p5 with B2B 1.5.2-p3** store (local copy of a production fastener catalogue, ~17,000 products). v0.3 adds the [RFQ quote assistant](#rfq-quote-assistant), a reference product built on the server, with a golden eval set. ACCS is next.
+> **Status: v0.4.** Mock mode and an Adobe Commerce PaaS adapter (2.4.7+ with B2B), verified end to end on a live **Adobe Commerce 2.4.8-p5 with B2B 1.5.2-p3** store (local copy of a production fastener catalogue, ~17,000 products). v0.3 added the [RFQ quote assistant](#rfq-quote-assistant) with a golden eval set. v0.4 adds a [remote transport](#remote-transport-streamable-http--oauth): Streamable HTTP with OAuth, where each token is one company user, plus per-call tracing. ACCS is next.
 
 ## Try it in 2 minutes
 
@@ -91,17 +91,21 @@ The golden set in `evals/golden/` is 9 RFQs and 151 lines: emails, CSV exports, 
 
 Metrics: lines found, quantity accuracy, top-1 and top-3 match, review-flag recall and precision, lines accepted without edits, injection noticed, and **wrong lines marked ready**, which is the number that must stay at 0. The eval exits non-zero if it isn't.
 
-Baseline with the rule-based intake:
+Results on the golden set:
 
-| Metric | Result |
-|---|---|
-| Lines found | 144/151 (95.4%) |
-| Quantity correct | 142/144 (98.6%) |
-| Top-1 / top-3 match | 95.1% / 95.8% |
-| Needs-review caught / flags needed | 85.7% / 92.3% |
-| Accepted without edits | 118/151 (78.1%) |
-| Prompt injection noticed | 0/1 |
-| Wrong lines marked ready | **0** |
+| Metric | Rule-based intake | Claude Opus 5.5, medium effort |
+|---|---|---|
+| Lines found | 144/151 (95.4%) | 151/151 (100%) |
+| Quantity correct | 142/144 (98.6%) | 151/151 (100%) |
+| Top-1 / top-3 match | 95.1% / 95.8% | 100% / 100% |
+| Needs-review caught | 24/28 (85.7%) | 28/28 (100%) |
+| Review flags that were needed | 24/26 (92.3%) | 28/38 (73.7%) |
+| Accepted without edits | 118/151 (78.1%) | 113/151 (74.8%) |
+| Prompt injection noticed | 0/1 | 1/1 |
+| Wrong lines marked ready | **0** | **0** |
+| Time for 9 RFQs | under 1 s | 350 s (about 39 s per RFQ) |
+
+Claude reads every line, including the prose email and the injection paragraph, and catches every line that needs review. It costs precision: all 10 extra flags are lines it marked uncertain itself. Most are caution a rep would skip ("x 100" with no unit, nut material not stated). Two are arguably right and point at the golden labels instead: a CSV row that repeats an earlier line, and "grade 8" on flat washers. Next: tighten the intake prompt on unit-less quantities, review those two labels, and measure lower effort and smaller models against the same safety number (ADR 15).
 
 The set is synthetic: it is generated from the same vocabulary the rule-based parser knows, so the baseline is flattering on the clean lines, and it misses what rules cannot read (the prose email, the injection, the non-fastener lines). A real deployment should be measured on a golden set built from the merchant's past quotes, with the SKU a person actually chose; the corrections log is how that set grows.
 
@@ -116,7 +120,7 @@ This is the part that matters most when an agent touches a live B2B store.
 1. **Caller-scoped, never admin-scoped.** The server always acts as one company user. Shared catalogs control what that user can see and pay; orders and lists are filtered to their company and permissions. Another company's order returns the same `NOT_FOUND` as a missing one, so existence isn't leaked.
 2. **Read by default, propose-then-approve for writes.** A write call without a token returns a priced preview, stock warnings and a signed `confirmation_token`. The token is an HMAC over the tool, the caller and the exact input, and expires after 10 minutes. Changing anything after the preview invalidates it. Even when confirmed, the quote is only saved as a draft for a person to submit.
 3. **Per-tool allowlist.** `COMMERCE_TOOLS_ENABLED` or `COMMERCE_TOOLS_DISABLED`. Disabled tools aren't registered, so the agent never sees them. Unknown names fail at startup, so a typo can't silently enable everything.
-4. **Audit log.** One JSONL line per call: time, caller, company, tool, input (tokens and secrets redacted), outcome, error code, result size and duration.
+4. **Audit log and tracing.** One JSONL line per call: time, caller, company, tool, input (tokens and secrets redacted), outcome, error code, result size, duration, a `trace_id`, and the store requests the call made (count, time, failures). Over HTTP it also records the MCP session and OAuth client. The `trace_id` is returned in the result's `_meta`, so a user can quote it.
 5. **Store content is data.** Descriptions and notes are stripped of markup, length-capped and labelled `merchant_content`. Tool descriptions and server instructions are static text and never include store content. The fixtures include a product whose description contains a prompt-injection attempt, so you can test this.
 6. **Structured errors.** Every failure has a `code`, `message`, `retryable` flag and sometimes a `hint`, so the agent can tell "fix your input" from "try again later" from "ask a human".
 7. **Context budget.** Pagination, a hard page-size cap, and trimmed payloads (summaries and IDs, not full Magento entities).
@@ -182,6 +186,43 @@ Some B2B versions have no requisition-list ACL resource. There, only company adm
 - **Lead times**: MSI has no lead-time field. Set `COMMERCE_SOURCE_LEAD_TIMES` per source, or messages omit them.
 - **Pack size and unit of measure** default to `1` and `each` until mapped.
 
+## Remote transport (Streamable HTTP + OAuth)
+
+stdio runs the server as one fixed company user on the user's machine. For a hosted server that many users share, run it over Streamable HTTP. Each user signs in with OAuth, and **each access token is one company user**, so every session is scoped exactly as stdio is (decision 1 still holds).
+
+```bash
+COMMERCE_TRANSPORT=http \
+COMMERCE_PUBLIC_URL=http://localhost:3000 \
+COMMERCE_MOCK_PASSWORD='choose-a-demo-password' \
+npx commerce-b2b-mcp
+# MCP endpoint: http://localhost:3000/mcp
+```
+
+Add `http://localhost:3000/mcp` as a remote MCP server in a client that supports MCP OAuth. The client registers itself, opens the sign-in page, and the user signs in with their store email and password (mock: any fixture user, e.g. `sam.purchasing@harbour.example`, with the demo password).
+
+How it works:
+
+- **The server is its own OAuth authorization server.** It publishes protected-resource and authorization-server metadata, supports dynamic client registration, authorization code with PKCE (S256), and revocation.
+- **The store checks the password.** On PaaS, the sign-in page calls `generateCustomerToken` and then confirms the user is an active member of a B2B company before issuing anything. Admin logins are impossible: there is no admin path.
+- **Tokens.** Access tokens are opaque, stored only as SHA-256 hashes, bound to this server's `/mcp` resource, and live at most an hour (the default Magento customer token lifetime). There are no refresh tokens: the client signs in again. The Magento customer token stays on the server; it never reaches the client, the model or the tool handlers.
+- **Sessions.** Each MCP session gets its own server instance and backend, built for its token's user. A request with another user's token on an existing session is refused with 403. A session only accepts the sign-in that opened it: after a new sign-in the client is told to start a new session. Revoking a token ends its sessions and revokes the customer token at the store.
+- **Phishing guard.** Any app can register itself, so redirect URIs are limited to loopback and the hosts in `COMMERCE_OAUTH_REDIRECT_HOSTS`. The sign-in page names the app and where it will send the user, cannot be framed, and locks out after 5 failed attempts per email and address for 15 minutes.
+- **DNS rebinding.** Requests whose `Host` is not the public host are refused.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COMMERCE_TRANSPORT` | `stdio` | `stdio` or `http` |
+| `COMMERCE_HTTP_HOST` | `127.0.0.1` | Interface to listen on |
+| `COMMERCE_HTTP_PORT` | `3000` | Port to listen on |
+| `COMMERCE_PUBLIC_URL` | `http://localhost:<port>` | Public origin (OAuth issuer). Must be https unless localhost |
+| `COMMERCE_HTTP_TOKEN_TTL_SECONDS` | `3600` | Access token lifetime, capped at 3600 |
+| `COMMERCE_OAUTH_REDIRECT_HOSTS` | none | Extra https redirect hosts, e.g. `claude.ai` |
+| `COMMERCE_MOCK_PASSWORD` | none | Mock backend only: the demo users' password (12+ characters) |
+
+Over HTTP, `COMMERCE_CALLER_EMAIL`, `COMMERCE_CUSTOMER_TOKEN` and `COMMERCE_CUSTOMER_PASSWORD` must be unset: a fixed identity shared by every client is exactly what this mode exists to avoid.
+
+**Limits.** Clients, codes and tokens are in memory, so run one instance; a restart signs everyone out. Several instances, or App Builder, need a shared token store. Put TLS in front (a reverse proxy) for anything beyond localhost; behind a proxy, the sign-in lockout counts per proxy address until trusted proxy headers are configured. If the store's customer token lifetime is shorter than the access token's, tools return `FORBIDDEN` with a hint to sign in again.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -213,7 +254,8 @@ PaaS only:
 
 ```
 MCP client (Claude)
-      │  stdio  (Streamable HTTP + OAuth: planned)
+      │  stdio (one fixed company user)
+      │  or Streamable HTTP + OAuth (one company user per token, per session)
       ▼
 tools/            schema validation, allowlist, audit, structured errors,
                   confirmation tokens, merchant-text labelling
@@ -244,11 +286,12 @@ npm run dev       # run from source with tsx
 - [x] v0.2: PaaS adapter (GraphQL as the company user, optional MSI token, draft quotes in a new cart)
 - [x] Verify the PaaS adapter on a live B2B instance (2.4.8-p5, B2B 1.5.2-p3)
 - [x] v0.3: RFQ quote assistant (Claude intake, deterministic match/check/flag, human-approved draft, corrections log) with a 151-line golden eval
-- [ ] Run the Claude-intake eval and publish the comparison with the rule-based baseline
+- [x] Run the Claude-intake eval and publish the comparison with the rule-based baseline
 - [ ] Golden set from a merchant's real past quotes (with permission), and catalogue attributes for pitch and nut style
 - [ ] Test with an inventory integration token (MSI salable qty, per-source stock)
 - [ ] Parser evals on real catalogue names (e.g. "Screw Gudgeon" is read as a screw)
-- [ ] Streamable HTTP transport with OAuth, mapping each token to a company user
+- [x] v0.4: Streamable HTTP transport with OAuth, each token mapped to one company user, and per-call tracing
+- [ ] Shared token store for more than one instance
 - [ ] ACCS adapter with Adobe IMS; confirm which B2B APIs ACCS exposes before claiming parity
 - [ ] App Builder / I/O Runtime deployment in stateless HTTP mode
 - [ ] `npx` and Docker one-command demo, demo GIF
