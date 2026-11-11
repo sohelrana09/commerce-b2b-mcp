@@ -123,6 +123,8 @@ This is the part that matters most when an agent touches a live B2B store.
 
 **Known limit of propose-then-approve.** The token proves that the confirmed call matches the previewed one. It can't prove a human saw the preview: that depends on the MCP client showing it to them. For that reason the write tool is limited to drafts, and the server instructions tell the agent to wait for explicit approval.
 
+The reasoning behind these choices, and the alternatives rejected, is in [docs/decisions.md](docs/decisions.md).
+
 ## Connect to Adobe Commerce (PaaS)
 
 Requirements: Adobe Commerce 2.4.7+ with the B2B extension, GraphQL enabled, and a company user account for the agent to act as.
