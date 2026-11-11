@@ -1,0 +1,46 @@
+{
+  "name": "commerce-b2b-mcp",
+  "version": "0.2.0",
+  "description": "MCP server that lets AI agents act as a B2B buyer or sales-rep assistant on Adobe Commerce (PaaS and ACCS), caller-scoped and safe by default.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "adobe-commerce",
+    "magento",
+    "b2b",
+    "claude",
+    "ai-agents"
+  ],
+  "author": "Sohel Rana",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "bin": {
+    "commerce-b2b-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
