@@ -1,0 +1,13 @@
+# Credentials and local data never leave this machine (same list as .dockerignore).
+.env
+.env.*
+.mcp.json
+scripts
+audit.jsonl
+*.log
+*.run.json
+evals
+.claude
+dist
+node_modules
+coverage

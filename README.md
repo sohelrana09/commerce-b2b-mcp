@@ -442,6 +442,26 @@ With `COMMERCE_HTTP_SESSIONS=stateless`, there are no MCP sessions: each POST to
 
 The design is [decision 20](docs/decisions.md#20-a-stateless-http-mode-for-load-balancers-and-serverless).
 
+### Vercel
+
+The repo deploys to Vercel as one function: [`vercel.json`](vercel.json) builds with `npm run build` and rewrites every path to [`api/index.js`](api/index.js), which serves the app from [`src/vercel.ts`](src/vercel.ts). Function instances share nothing in memory, so the handler insists on stateless mode and Redis, and answers 503 until they are set (the reason is in the function logs, never in the response).
+
+Set these for the Production environment (and Preview, if you use preview URLs):
+
+| Variable | Value |
+|---|---|
+| `COMMERCE_PUBLIC_URL` | The stable https production domain, e.g. `https://my-project.vercel.app`. Requests to any other host (such as a per-deployment URL) are refused |
+| `COMMERCE_HTTP_SESSIONS` | `stateless` |
+| `COMMERCE_STATE_STORE` | `redis` |
+| `COMMERCE_REDIS_URL` | A `rediss://` address, for example from Upstash in the Vercel Marketplace |
+| `COMMERCE_STATE_KEY` | 32+ random characters |
+| `COMMERCE_OAUTH_REDIRECT_HOSTS` | `claude.ai` to add the server as a claude.ai connector |
+| `COMMERCE_TRUST_PROXY` | `1` |
+| `COMMERCE_MOCK_PASSWORD` | Mock backend only |
+| `COMMERCE_BACKEND`, `COMMERCE_BASE_URL`, `COMMERCE_CONFIRM_SECRET` | For a real store, as in [Configuration](#configuration) |
+
+`COMMERCE_TRANSPORT` defaults to `http` here. Turn off Vercel Deployment Protection for the production domain: clients cannot get past Vercel's own sign-in. Then add `https://<domain>/mcp` as a remote MCP server. The design is [decision 21](docs/decisions.md#21-a-vercel-function-entry-that-refuses-in-memory-state).
+
 **Limits.**
 - **One instance by default.** Clients, codes and tokens are kept in memory, and a restart signs everyone out. To run several instances, use the [shared Redis store](#several-instances), with sticky sessions or [stateless mode](#stateless-mode).
 - **TLS.** Put TLS in front (a reverse proxy) for anything beyond localhost.
