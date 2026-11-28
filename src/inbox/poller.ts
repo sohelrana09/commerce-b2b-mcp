@@ -21,6 +21,9 @@ const MAX_TEXT = 200_000;
 /** A body shorter than this ("please see attached") is not reviewed when there are attachments. */
 const MIN_BODY = 40;
 const TEXT_EXT = [".txt", ".csv", ".eml"];
+/** Polls that may fail on one message with a temporary error before it is set aside. */
+export const MAX_ATTEMPTS = 3;
+const DAY_MS = 24 * 3600_000;
 
 export interface PollerDeps {
   config: Config;
@@ -52,30 +55,45 @@ export function senderAllowed(from: string | undefined, allowed: string[]): bool
   return allowed.some((a) => (a.includes("@") ? a === addr : domain === a || domain.endsWith(`.${a}`)));
 }
 
+/**
+ * True when the topmost Authentication-Results header was written by our own mail server (`authservId`) and says
+ * DMARC passed for the From domain. Headers further down may have been added by the sender, so only the top one counts.
+ */
+export function dmarcPassed(mail: ParsedMail, authservId: string): boolean {
+  const top = mail.headerLines.find((h) => h.key.toLowerCase() === "authentication-results");
+  if (!top) return false;
+  const value = top.line.slice(top.line.indexOf(":") + 1).replace(/\r?\n[ \t]+/g, " ").trim().toLowerCase();
+  if (value.split(";")[0]!.trim().split(/\s+/)[0] !== authservId) return false;
+  const from = (mail.from?.value[0]?.address ?? "").toLowerCase();
+  const domain = from.slice(from.lastIndexOf("@") + 1);
+  if (!domain) return false;
+  return value.split(";").some((part) => {
+    const p = part.trim();
+    return /^dmarc=pass\b/.test(p) && new RegExp(`header\\.from=${domain.replace(/[.\-]/g, "\\$&")}(\\s|$)`).test(p);
+  });
+}
+
 /** The documents to review in one email: its usable attachments, or else its body. */
 export function documentsFrom(mail: ParsedMail, pdfAllowed: boolean): { docs: RfqDocument[]; skipped: string[] } {
   const subject = cleanText(mail.subject ?? "RFQ by email", 120) || "RFQ by email";
   const docs: RfqDocument[] = [];
   const skipped: string[] = [];
-  for (const a of mail.attachments.slice(0, MAX_ATTACHMENTS)) {
+  // Reasons in `skipped` go to the log: they name an attachment by number and type only, never by the sender's file name.
+  mail.attachments.slice(0, MAX_ATTACHMENTS).forEach((a, i) => {
     const name = cleanText(a.filename ?? "attachment", 80);
     const ext = name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
-    if (a.size > MAX_ATTACHMENT_BYTES) {
-      skipped.push(`${name}: over 20 MB`);
-      continue;
-    }
+    const label = `attachment ${i + 1}${/^\.[a-z0-9]{1,5}$/.test(ext) ? ` (${ext})` : ""}`;
+    if (a.size > MAX_ATTACHMENT_BYTES) return void skipped.push(`${label}: over 20 MB`);
     if (ext === ".pdf" || a.contentType === "application/pdf") {
-      if (!pdfAllowed) {
-        skipped.push(`${name}: PDF needs Claude intake`);
-        continue;
-      }
+      if (!pdfAllowed) return void skipped.push(`${label}: PDF needs Claude intake`);
+      if (a.content.subarray(0, 5).toString("latin1") !== "%PDF-") return void skipped.push(`${label}: not a PDF`);
       docs.push({ kind: "pdf", name: `${subject} / ${name}`, base64: a.content.toString("base64") });
     } else if (TEXT_EXT.includes(ext) || a.contentType === "text/csv" || a.contentType === "text/plain") {
       docs.push({ kind: "text", name: `${subject} / ${name}`, text: a.content.toString("utf8").slice(0, MAX_TEXT) });
     } else {
-      skipped.push(`${name}: not a type the assistant reads`);
+      skipped.push(`${label}: not a type the assistant reads`);
     }
-  }
+  });
   if (mail.attachments.length > MAX_ATTACHMENTS) skipped.push(`${mail.attachments.length - MAX_ATTACHMENTS} more attachment(s) not read`);
   const body = (mail.text ?? (typeof mail.html === "string" ? cleanText(mail.html, Infinity) : "")).trim();
   if (!docs.length || body.length >= MIN_BODY * 4) {
@@ -131,6 +149,12 @@ export async function pollOnce(deps: PollerDeps): Promise<PollResult> {
         result.skipped++;
         continue;
       }
+      if (inbox.authservId && !dmarcPassed(mail, inbox.authservId)) {
+        log(`message ${m.uid}: no DMARC pass from ${inbox.authservId} for the From domain, set aside`);
+        await mailbox.setAside(m.uid);
+        result.skipped++;
+        continue;
+      }
       const { docs, skipped } = documentsFrom(mail, config.rfq.extractor === "claude");
       for (const why of skipped) log(`message ${m.uid}: ${why}`);
       if (!docs.length) {
@@ -139,31 +163,57 @@ export async function pollOnce(deps: PollerDeps): Promise<PollResult> {
         result.skipped++;
         continue;
       }
-      try {
-        tools ??= await deps.tools();
-        for (const doc of docs) {
-          const review = await runReview(doc, config.rfq, tools, deps.extractor);
-          if (!review.lines.length) {
-            log(`message ${m.uid}: no RFQ lines found in one part`);
-            continue;
-          }
-          if (review.lines.length > MAX_RFQ_LINES) log(`message ${m.uid}: ${review.lines.length} lines; the web page reviews it but cannot draft more than one quote's worth at once`);
-          await reviews.create(owner, "inbox", doc.name, review);
-          result.reviewed++;
-        }
-      } catch (err) {
-        if (transient(err)) {
-          // The store or the intake model is down: leave the message unread for the next poll.
-          log(`message ${m.uid}: ${(err as ToolError).message} Will retry.`);
-          result.retry_later++;
-          continue;
-        }
-        log(`message ${m.uid}: ${err instanceof ToolError ? err.message : "review failed"}; set aside`);
+      // A message that keeps failing with a temporary error is set aside after a few polls, so it cannot block the queue.
+      const attempts = await store.increment("inbox-attempts", seenKey, DAY_MS);
+      if (attempts > MAX_ATTEMPTS) {
+        log(`message ${m.uid}: still failing after ${MAX_ATTEMPTS} polls, set aside`);
         await mailbox.setAside(m.uid);
         result.skipped++;
         continue;
       }
-      await store.set("inbox-seen", seenKey, 1, config.rfq.retentionDays * 24 * 3600_000);
+      let retry = false;
+      try {
+        tools ??= await deps.tools();
+        for (const [i, doc] of docs.entries()) {
+          // Parts already saved on an earlier, interrupted poll are not reviewed (or paid for) again.
+          const partKey = `${seenKey}|${i}`;
+          if (await store.get("inbox-part", partKey)) continue;
+          const budgetKey = new Date(deps.now?.() ?? Date.now()).toISOString().slice(0, 10);
+          if ((await store.increment("inbox-docs", budgetKey, DAY_MS * 2)) > inbox.maxDocsPerDay) {
+            log(`daily limit of ${inbox.maxDocsPerDay} documents reached (COMMERCE_INBOX_MAX_DOCS_PER_DAY); message ${m.uid} waits for tomorrow`);
+            retry = true;
+            break;
+          }
+          const review = await runReview(doc, config.rfq, tools, deps.extractor);
+          if (review.lines.length) {
+            if (review.lines.length > MAX_RFQ_LINES) log(`message ${m.uid}: ${review.lines.length} lines in part ${i + 1}; split it before drafting`);
+            await reviews.create(owner, "inbox", doc.name, review);
+            result.reviewed++;
+          } else {
+            log(`message ${m.uid}: no RFQ lines found in part ${i + 1}`);
+          }
+          await store.set("inbox-part", partKey, 1, config.rfq.retentionDays * DAY_MS);
+        }
+      } catch (err) {
+        if (transient(err)) {
+          // The store or the intake model is down: leave the message unread for the next poll.
+          log(`message ${m.uid}: ${(err as ToolError).code}; will retry (attempt ${attempts} of ${MAX_ATTEMPTS})`);
+          result.retry_later++;
+          continue;
+        }
+        log(`message ${m.uid}: ${err instanceof ToolError ? err.code : "review failed"}; set aside`);
+        await mailbox.setAside(m.uid);
+        result.skipped++;
+        continue;
+      }
+      if (retry) {
+        result.retry_later++;
+        // The budget, not the message, stopped it: this poll does not count as a failed attempt.
+        await store.delete("inbox-attempts", seenKey);
+        break;
+      }
+      await store.set("inbox-seen", seenKey, 1, config.rfq.retentionDays * DAY_MS);
+      await store.delete("inbox-attempts", seenKey);
       await mailbox.markDone(m.uid);
     }
   } finally {

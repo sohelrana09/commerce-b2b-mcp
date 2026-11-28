@@ -6,6 +6,9 @@ import { extractorFromConfig } from "./extract/factory.js";
 import type { Extractor, RfqDocument } from "./extract/schema.js";
 import { draftInput, FLAG_SEVERITY, reviewRfq, type QuoteReview } from "./pipeline.js";
 
+/** RFQ reviews one user may start per hour, through the tool and the web page together. Bounds store load and paid intake. */
+export const MAX_REVIEWS_PER_HOUR = 30;
+
 /** Most RFQ lines one review returns. Past this the result would not fit the model's context budget. */
 export const MAX_RFQ_LINES = 80;
 
@@ -28,11 +31,14 @@ export async function runReview(doc: RfqDocument, rfq: Config["rfq"], tools: Com
   } catch (err) {
     if (err instanceof ToolError) throw err;
     if (err instanceof Anthropic.APIError) {
-      throw new ToolError(err.status === 429 ? "RATE_LIMITED" : "UPSTREAM_UNAVAILABLE", "The RFQ intake model is unavailable right now.", "Try again in a minute.");
+      // Only overload, rate limits and lost connections are worth retrying. A 4xx means this RFQ (a corrupt or
+      // oversized PDF, say) will fail the same way every time.
+      const status = typeof err.status === "number" ? err.status : undefined;
+      if (status === 429) throw new ToolError("RATE_LIMITED", "The RFQ intake model is busy.", "Try again in a minute.");
+      if (status === undefined || status >= 500) throw new ToolError("UPSTREAM_UNAVAILABLE", "The RFQ intake model is unavailable right now.", "Try again in a minute.");
+      throw new ToolError("INVALID_INPUT", "The RFQ intake model could not read this document.", "Check that the file is a readable RFQ, or paste it as text.");
     }
     const message = err instanceof Error ? err.message : String(err);
-    // The pipeline's own messages name a tool and are safe to show; anything else stays generic.
-    if (/ failed( on line \d+)?: /.test(message)) throw new ToolError("UPSTREAM_UNAVAILABLE", message.slice(0, 300));
     if (/declined|too long to extract|did not match the extraction schema|reads text and CSV only/.test(message)) {
       throw new ToolError("INVALID_INPUT", message.slice(0, 300));
     }

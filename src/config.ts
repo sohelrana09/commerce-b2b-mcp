@@ -270,8 +270,18 @@ export interface InboxConfig {
   /** Processed mail is moved here; unset: it is only marked as read. */
   doneFolder?: string;
   pollSeconds: number;
-  /** Lower-cased addresses ("buyer@x.example") and domains ("x.example"). Empty: mail from anyone is reviewed. */
+  /** Lower-cased addresses ("buyer@x.example") and domains ("x.example"). Empty only with allowAnySender. */
   allowedSenders: string[];
+  /** COMMERCE_INBOX_ALLOW_ANY_SENDER=on: review mail from anyone. Off by default: an allowlist is required. */
+  allowAnySender: boolean;
+  /**
+   * The authserv-id your own mail server writes in Authentication-Results (e.g. "mx.supplier.example"). When set, a
+   * message is reviewed only if the topmost Authentication-Results header is that server's and says dmarc=pass for
+   * the From domain, so a forged From address is refused.
+   */
+  authservId?: string;
+  /** Documents reviewed per day, across all mail. Bounds store load and paid intake. */
+  maxDocsPerDay: number;
 }
 
 export function loadInbox(env: NodeJS.ProcessEnv): InboxConfig {
@@ -283,6 +293,12 @@ export function loadInbox(env: NodeJS.ProcessEnv): InboxConfig {
   if (!user || !password) throw new Error("COMMERCE_INBOX_USER and COMMERCE_INBOX_PASSWORD (an app password) are required. Keep them in .env.");
   const allowed = (parseList(env.COMMERCE_INBOX_ALLOWED_SENDERS) ?? []).map((s) => s.toLowerCase().replace(/^@/, ""));
   for (const a of allowed) if (!/^([^@\s]+@)?[a-z0-9.-]+\.[a-z]{2,}$/.test(a)) throw new Error(`COMMERCE_INBOX_ALLOWED_SENDERS has an entry that is not an address or domain: "${a}"`);
+  const allowAnySender = loadOnOff("COMMERCE_INBOX_ALLOW_ANY_SENDER", env.COMMERCE_INBOX_ALLOW_ANY_SENDER);
+  if (!allowed.length && !allowAnySender) {
+    throw new Error("Set COMMERCE_INBOX_ALLOWED_SENDERS to the addresses or domains whose RFQs to review (or COMMERCE_INBOX_ALLOW_ANY_SENDER=on to review mail from anyone).");
+  }
+  const authservId = env.COMMERCE_INBOX_AUTHSERV_ID?.trim().toLowerCase();
+  if (authservId !== undefined && authservId !== "" && !/^[a-z0-9.-]{1,253}$/.test(authservId)) throw new Error("COMMERCE_INBOX_AUTHSERV_ID must be a host name.");
   return {
     host,
     port: intSetting("COMMERCE_INBOX_PORT", env.COMMERCE_INBOX_PORT, 993, 1, 65535),
@@ -292,6 +308,9 @@ export function loadInbox(env: NodeJS.ProcessEnv): InboxConfig {
     ...(env.COMMERCE_INBOX_DONE_FOLDER ? { doneFolder: env.COMMERCE_INBOX_DONE_FOLDER } : {}),
     pollSeconds: intSetting("COMMERCE_INBOX_POLL_SECONDS", env.COMMERCE_INBOX_POLL_SECONDS, 120, 30, 86_400),
     allowedSenders: allowed,
+    allowAnySender,
+    ...(authservId ? { authservId } : {}),
+    maxDocsPerDay: intSetting("COMMERCE_INBOX_MAX_DOCS_PER_DAY", env.COMMERCE_INBOX_MAX_DOCS_PER_DAY, 200, 1, 100_000),
   };
 }
 

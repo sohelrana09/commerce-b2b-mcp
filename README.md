@@ -171,7 +171,7 @@ With no settings, it runs against the mock store as a buyer at *Harbour Marine E
 
 ### From an MCP client
 
-The same review is available in chat as the `review_rfq` tool. Paste the RFQ (or attach it as a base64 PDF) and the server reads it with its own intake step, which has no tools, then returns each line with its flags and a `draft_input` for `draft_negotiable_quote`. Nothing is saved until a person approves the draft preview.
+The same review is available in chat as the `review_rfq` tool. Paste the RFQ (or attach it as a base64 PDF) and the server reads it with its own intake step, which has no tools (at most 30 reviews an hour per user, shared with the review page), then returns each line with its flags and a `draft_input` for `draft_negotiable_quote`. Nothing is saved until a person approves the draft preview.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -385,8 +385,13 @@ Saved reviews are kept per user in the state store for `COMMERCE_RFQ_RETENTION_D
 | `COMMERCE_INBOX_HOST`, `COMMERCE_INBOX_PORT` | `993` | IMAP server (TLS only) |
 | `COMMERCE_INBOX_USER`, `COMMERCE_INBOX_PASSWORD` | | Mailbox login; use an app password and keep it in `.env` |
 | `COMMERCE_INBOX_FOLDER`, `COMMERCE_INBOX_DONE_FOLDER` | `INBOX`, unset | Where to read, and where to move processed mail (unset: mark it read) |
-| `COMMERCE_INBOX_ALLOWED_SENDERS` | empty (anyone, with a warning) | Comma-separated addresses or domains whose mail is reviewed |
+| `COMMERCE_INBOX_ALLOWED_SENDERS` | required | Comma-separated addresses or domains whose mail is reviewed |
+| `COMMERCE_INBOX_ALLOW_ANY_SENDER` | `off` | `on` reviews mail from anyone instead (not recommended) |
+| `COMMERCE_INBOX_AUTHSERV_ID` | unset (warns) | Your mail server's id in `Authentication-Results`. When set, mail is reviewed only if that server saw DMARC pass for the From domain, so a forged From is refused |
+| `COMMERCE_INBOX_MAX_DOCS_PER_DAY` | `200` | Documents reviewed per day; the rest wait for the next day |
 | `COMMERCE_INBOX_POLL_SECONDS` | `120` | Time between polls |
+
+A message that fails with a temporary error is retried on the next poll, up to 3 times, then set aside. Parts already reviewed are not reviewed again.
 
 ```bash
 rfq-inbox --once

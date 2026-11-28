@@ -30,7 +30,8 @@ async function main() {
   const inbox = loadInbox(process.env);
   const state = loadState(process.env);
   if (state.kind !== "redis") throw new Error("Set COMMERCE_STATE_STORE=redis: the review page reads the queue from the same Redis.");
-  if (!inbox.allowedSenders.length) log("WARNING COMMERCE_INBOX_ALLOWED_SENDERS is empty: mail from anyone will be reviewed.");
+  if (!inbox.allowedSenders.length) log("WARNING COMMERCE_INBOX_ALLOW_ANY_SENDER is on: mail from anyone will be reviewed.");
+  if (!inbox.authservId) log("WARNING COMMERCE_INBOX_AUTHSERV_ID is not set: the sender allowlist trusts the From header, which can be forged.");
   if (config.rfq.extractor === "claude") log("Claude intake is on: each RFQ is a paid API call (about $0.08).");
 
   const store = new RedisStore({ url: state.url, secret: state.secret, prefix: state.prefix });

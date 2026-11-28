@@ -96,6 +96,9 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     claim: async (token, ttlMs) => (await provider.store.increment("confirm-used", token, ttlMs)) === 1,
   };
 
+  // Shared rate counters (the RFQ review budget), across instances in Redis mode.
+  const counter = (ns: string, key: string, windowMs: number) => provider.store.increment(ns, key, windowMs);
+
   const backendFor = (user: SignedInUser): CommerceBackend => {
     if (shared) return shared;
     if (!config.paas || !user.customerToken) throw new Error("No customer token for this session.");
@@ -174,7 +177,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     }
     entry.lastUsed = now();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    const { server } = createServer({ ...config, callerEmail: email }, { backend: entry.backend, audit, ledger });
+    const { server } = createServer({ ...config, callerEmail: email }, { backend: entry.backend, audit, ledger, counter });
     res.on("close", () => {
       void transport.close().catch(() => undefined);
       void server.close().catch(() => undefined);
@@ -223,7 +226,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     transport.onclose = () => {
       if (transport.sessionId) sessions.delete(transport.sessionId);
     };
-    const { server } = createServer({ ...config, callerEmail: user.email }, { backend: backendFor(user), audit, ledger });
+    const { server } = createServer({ ...config, callerEmail: user.email }, { backend: backendFor(user), audit, ledger, counter });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   });

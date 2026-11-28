@@ -147,6 +147,16 @@ describe("RFQ web page", () => {
     expect(own.headers.get("referrer-policy")).toBe("same-origin");
   });
 
+  it("answers an anonymous upload before reading its body", async () => {
+    const { base } = await start();
+    const res = await fetch(`${base}/rfq/new`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `name=x&file_base64=${"A".repeat(5_000_000)}`,
+    });
+    expect(res.status).toBe(401);
+  });
+
   it("renders customer text as inert text", async () => {
     const { base } = await start();
     const b = browser(base);

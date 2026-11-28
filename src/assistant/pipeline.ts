@@ -1,4 +1,5 @@
 import { mapLimit } from "../concurrency.js";
+import { ToolError, type ToolErrorCode } from "../errors.js";
 import type { CommerceTools } from "./commerce.js";
 import type { ExtractedLine, Extraction, ExtractionUsage, Extractor, RfqDocument } from "./extract/schema.js";
 
@@ -89,6 +90,15 @@ export interface QuoteReview {
 interface SearchRow { sku: string; name: string; score: number; mismatched?: string[]; pack_size: number | null }
 interface StockRow { sku: string; salable_qty: number | null; in_stock: boolean; message: string }
 interface PriceRow { sku: string; unit_price: number; line_total: number; currency: string; price_source: string }
+
+const CODES: ToolErrorCode[] = ["INVALID_INPUT", "NOT_FOUND", "FORBIDDEN", "TOOL_DISABLED", "UPSTREAM_UNAVAILABLE", "RATE_LIMITED", "RESULT_TOO_LARGE", "INTERNAL"];
+
+/** A failed tool call as a ToolError that keeps the tool's own code, so callers can tell a retryable outage from a bad input. */
+function toolFailure(what: string, res: { data: any }): ToolError {
+  const e = res.data?.error ?? {};
+  const code: ToolErrorCode = CODES.includes(e.code) ? e.code : "UPSTREAM_UNAVAILABLE";
+  return new ToolError(code, `${what} failed: ${String(e.message ?? "unknown error").slice(0, 300)}`);
+}
 
 const UNUSUAL_QTY = 250_000;
 /** The draft_negotiable_quote tool refuses more than this for one SKU. */
@@ -196,7 +206,7 @@ export async function reviewLines(tools: CommerceTools, extraction: Extraction):
     if (line.length_mm && line.length_mm > 10_000) flags.push({ code: "extraction_uncertain", message: `Length ${line.length_mm} mm is not plausible; it was not used in the search.` });
     if (line.grade && !/^[A-Za-z0-9.\-]{1,10}$/.test(line.grade)) flags.push({ code: "extraction_uncertain", message: `"${line.grade.slice(0, 40)}" is not a property class; it was not used in the search.` });
     const res = await tools.call("search_parts", searchArgs(line));
-    if (res.isError) throw new Error(`search_parts failed on line ${index + 1}: ${res.data?.error?.message ?? "unknown error"}`);
+    if (res.isError) throw toolFailure(`search_parts on line ${index + 1}`, res);
     const candidates: Candidate[] = ((res.data.results ?? []) as SearchRow[]).map((r) => ({
       sku: r.sku,
       name: r.name,
@@ -257,7 +267,7 @@ export async function reviewLines(tools: CommerceTools, extraction: Extraction):
     for (const r of batch) qtyNeeded[r.match!.sku] = Math.max(qtyNeeded[r.match!.sku] ?? 0, r.qty_each);
     const skus = Object.keys(qtyNeeded);
     const res = await tools.call("check_availability", { skus, qty_needed: qtyNeeded });
-    if (res.isError) throw new Error(`check_availability failed: ${res.data?.error?.message ?? "unknown error"}`);
+    if (res.isError) throw toolFailure("check_availability", res);
     const bySku = new Map<string, StockRow>((res.data.items as StockRow[]).map((i) => [i.sku, i]));
     for (const r of batch) {
       const a = bySku.get(r.match!.sku);
@@ -285,7 +295,7 @@ export async function reviewLines(tools: CommerceTools, extraction: Extraction):
       for (const r of batch) {
         const one = await tools.call("get_customer_price", { lines: [{ sku: r.match!.sku, qty: r.qty_each }] });
         if (!one.isError) apply([r], one.data.lines);
-        else if (one.data?.error?.retryable) throw new Error(`get_customer_price failed: ${one.data.error.message}`);
+        else if (one.data?.error?.retryable) throw toolFailure("get_customer_price", one);
       }
     }
   }
@@ -408,7 +418,7 @@ export async function applyEdits(review: QuoteReview, edits: LineEdit[], tools: 
     const qtyNeeded: Record<string, number> = {};
     for (const r of batch) qtyNeeded[r.match!.sku] = Math.max(qtyNeeded[r.match!.sku] ?? 0, r.qty_each);
     const res = await tools.call("check_availability", { skus: Object.keys(qtyNeeded), qty_needed: qtyNeeded });
-    if (res.isError) throw new Error(`check_availability failed: ${res.data?.error?.message ?? "unknown error"}`);
+    if (res.isError) throw toolFailure("check_availability", res);
     const bySku = new Map<string, StockRow>((res.data.items as StockRow[]).map((i) => [i.sku, i]));
     for (const r of batch) {
       const a = bySku.get(r.match!.sku);
@@ -421,7 +431,7 @@ export async function applyEdits(review: QuoteReview, edits: LineEdit[], tools: 
   for (const r of changed) {
     const one = await tools.call("get_customer_price", { lines: [{ sku: r.match!.sku, qty: r.qty_each }] });
     if (one.isError) {
-      if (one.data?.error?.retryable) throw new Error(`get_customer_price failed: ${one.data.error.message}`);
+      if (one.data?.error?.retryable) throw toolFailure("get_customer_price", one);
     } else {
       const p = (one.data.lines as PriceRow[])[0];
       if (p && p.sku === r.match!.sku) r.price = { unit_price: p.unit_price, line_total: p.line_total, currency: p.currency, price_source: p.price_source };

@@ -123,7 +123,20 @@ export class CommerceOAuthProvider implements OAuthServerProvider {
 
   constructor(private readonly opts: ProviderOptions) {
     this.now = opts.now ?? Date.now;
-    this.store = opts.store ?? new MemoryStore({ now: this.now, maxEntries: { client: MAX_CLIENTS, failure: 50_000, "request-failure": 50_000 } });
+    // Bounded namespaces: a flood of registrations, failed sign-ins, sign-in page loads or uploads cannot grow memory without limit.
+    const maxEntries = {
+      client: MAX_CLIENTS,
+      failure: 50_000,
+      "request-failure": 50_000,
+      // The RFQ review page (ADR 24).
+      "web-login": 10_000,
+      "web-session": 10_000,
+      "rfq-uploads": 50_000,
+      "rfq-review": 50_000,
+      "rfq-index": 50_000,
+      "rfq-index-lock": 10_000,
+    };
+    this.store = opts.store ?? new MemoryStore({ now: this.now, maxEntries });
   }
 
   // ------------------------------------------------------------ clients

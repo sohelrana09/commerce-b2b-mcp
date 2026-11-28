@@ -7,7 +7,7 @@ import type { Extractor, RfqDocument } from "../assistant/extract/schema.js";
 import { toolsFor } from "../assistant/in-process.js";
 import { applyEdits, draftInput, FLAG_SEVERITY, type LineEdit, type LineReview } from "../assistant/pipeline.js";
 import { ReviewStore, type SavedReview } from "../assistant/reviews.js";
-import { MAX_RFQ_LINES, runReview } from "../assistant/summary.js";
+import { MAX_REVIEWS_PER_HOUR, MAX_RFQ_LINES, runReview } from "../assistant/summary.js";
 import type { CommerceBackend } from "../backend/types.js";
 import type { Config } from "../config.js";
 import type { TokenLedger } from "../confirm.js";
@@ -48,8 +48,6 @@ interface WebSession {
 }
 
 const LOGIN_TTL_MS = 10 * 60_000;
-/** RFQ reviews one user may start per hour. Bounds store load and, with Claude intake, API spend. */
-export const MAX_UPLOADS_PER_HOUR = 30;
 const MAX_TEXT = 200_000;
 const MAX_PDF_BASE64 = 28_000_000;
 const TEXT_TYPES = [".txt", ".eml", ".csv"];
@@ -145,16 +143,22 @@ export function rfqWebRouter(opts: WebOptions): Router {
   };
 
   type Authed = Request & { session: WebSession };
-  const requireSession = async (req: Request, res: Response, next: NextFunction) => {
+  /** Signed-in check, from the cookie alone. It runs before any body is parsed, so an anonymous request is never buffered. */
+  const authenticate = async (req: Request, res: Response, next: NextFunction) => {
     const s = await sessionOf(req);
     if (!s) return void (req.method === "GET" ? res.redirect(303, "/rfq/login") : res.status(401).type("text/plain").send("Your session has ended. Sign in again."));
-    if (req.method === "POST") {
-      const given = typeof req.body?.csrf === "string" ? req.body.csrf : "";
-      if (!given || !sameToken(given, s.csrf)) return void res.status(403).type("text/plain").send("The form has expired. Go back, reload the page and try again.");
-    }
     (req as Authed).session = s;
     next();
   };
+  const checkCsrf = (req: Request, res: Response, next: NextFunction) => {
+    const s = (req as Authed).session;
+    const given = typeof req.body?.csrf === "string" ? req.body.csrf : "";
+    if (!given || !sameToken(given, s.csrf)) return void res.status(403).type("text/plain").send("The form has expired. Go back, reload the page and try again.");
+    next();
+  };
+  const requireSession = authenticate;
+  /** A signed-in form post: session first, then the body (with this route's size limit), then the CSRF token. */
+  const guard = (parser: express.RequestHandler) => [authenticate, parser, checkCsrf];
 
   const withTools = async <T>(s: WebSession, fn: (tools: CommerceTools) => Promise<T>): Promise<T> => {
     const tools = await toolsFor({ config, callerEmail: s.user.email, backend: opts.backendFor(s.user), audit: opts.audit, ledger: opts.ledger });
@@ -248,7 +252,7 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
     res.redirect(303, "/rfq");
   });
 
-  router.post("/logout", small, requireSession, async (req, res) => {
+  router.post("/logout", ...guard(small), async (req, res) => {
     const raw = cookieValue(req)!;
     const s = await store.take<WebSession>("web-session", hash(raw));
     setCookie(res, "", 0);
@@ -300,8 +304,7 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
 
   router.post(
     "/new",
-    large,
-    requireSession,
+    ...guard(large),
     handle(async (req, res) => {
       const s = req.session;
       const b = req.body as Record<string, unknown>;
@@ -329,8 +332,8 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
         if (text.length > MAX_TEXT) throw new ToolError("INVALID_INPUT", `The RFQ is over ${MAX_TEXT} characters. Split it.`);
         doc = { kind: "text", name, text };
       }
-      if ((await store.increment("rfq-uploads", s.user.email.toLowerCase(), 3600_000)) > MAX_UPLOADS_PER_HOUR) {
-        throw new ToolError("RATE_LIMITED", `You can review ${MAX_UPLOADS_PER_HOUR} RFQs an hour. Try again later.`);
+      if ((await store.increment("rfq-uploads", s.user.email.toLowerCase(), 3600_000)) > MAX_REVIEWS_PER_HOUR) {
+        throw new ToolError("RATE_LIMITED", `You can review ${MAX_REVIEWS_PER_HOUR} RFQs an hour. Try again later.`);
       }
       const review = await withTools(s, (tools) => runReview(doc, config.rfq, tools, opts.extractor));
       if (review.lines.length > MAX_RFQ_LINES) throw new ToolError("INVALID_INPUT", `The RFQ has ${review.lines.length} lines; split it into parts of ${MAX_RFQ_LINES} or fewer.`);
@@ -396,8 +399,7 @@ ${saved.drafted ? `<p class="ok">Draft quote ${esc(saved.drafted.quote_id)} was 
 
   router.post(
     "/r/:id/edit",
-    small,
-    requireSession,
+    ...guard(small),
     handle(async (req, res) => {
       const saved = await loadReview(req);
       const b = req.body as Record<string, unknown>;
@@ -443,8 +445,7 @@ ${saved.drafted ? `<p class="ok">Draft quote ${esc(saved.drafted.quote_id)} was 
 
   router.post(
     "/r/:id/delete",
-    small,
-    requireSession,
+    ...guard(small),
     handle(async (req, res) => {
       const saved = await loadReview(req);
       await reviews.delete(req.session.user.email, saved.id);
@@ -462,8 +463,7 @@ ${saved.drafted ? `<p class="ok">Draft quote ${esc(saved.drafted.quote_id)} was 
 
   router.post(
     "/r/:id/preview",
-    small,
-    requireSession,
+    ...guard(small),
     handle(async (req, res) => {
       const saved = await loadReview(req);
       const input = draftFor(saved);
@@ -490,8 +490,7 @@ ${warnings.length ? `<div class="warn"><ul>${warnings.map((w) => `<li>${txt(w, 3
 
   router.post(
     "/r/:id/save",
-    small,
-    requireSession,
+    ...guard(small),
     handle(async (req, res) => {
       const saved = await loadReview(req);
       const token = typeof req.body?.token === "string" ? req.body.token : "";
@@ -617,10 +616,10 @@ ${comment ? `<p>Your message: <code>${txt(comment, 1000)}</code></p>` : ""}
       );
     });
 
-  router.post("/q/:qid/submit", small, requireSession, quoteAction("submit_negotiable_quote", false));
-  router.post("/q/:qid/submit/confirm", small, requireSession, quoteAction("submit_negotiable_quote", true));
-  router.post("/q/:qid/close", small, requireSession, quoteAction("close_negotiable_quote", false));
-  router.post("/q/:qid/close/confirm", small, requireSession, quoteAction("close_negotiable_quote", true));
+  router.post("/q/:qid/submit", ...guard(small), quoteAction("submit_negotiable_quote", false));
+  router.post("/q/:qid/submit/confirm", ...guard(small), quoteAction("submit_negotiable_quote", true));
+  router.post("/q/:qid/close", ...guard(small), quoteAction("close_negotiable_quote", false));
+  router.post("/q/:qid/close/confirm", ...guard(small), quoteAction("close_negotiable_quote", true));
 
   return router;
 }

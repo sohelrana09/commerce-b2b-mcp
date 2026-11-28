@@ -19,6 +19,23 @@ export interface ToolDeps {
   caller: Caller;
   /** Marks confirmation tokens used. Shared by every server in the process (and across instances over HTTP). */
   ledger: TokenLedger;
+  /** Adds one to a counter that expires `windowMs` after its first use; returns the new count. Shared like the ledger. */
+  counter: Counter;
+}
+
+export type Counter = (ns: string, key: string, windowMs: number) => Promise<number>;
+
+/** A counter for one process. Over HTTP the app passes the shared state store's instead. */
+export function memoryCounter(now: () => number = Date.now): Counter {
+  const counts = new Map<string, { n: number; until: number }>();
+  return async (ns, key, windowMs) => {
+    const k = `${ns}|${key}`;
+    for (const [x, c] of counts) if (c.until <= now()) counts.delete(x);
+    const c = counts.get(k) ?? { n: 0, until: now() + windowMs };
+    c.n++;
+    counts.set(k, c);
+    return c.n;
+  };
 }
 
 export interface ToolSpec<Shape extends z.ZodRawShape> {

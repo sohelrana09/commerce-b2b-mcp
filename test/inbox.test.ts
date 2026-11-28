@@ -6,15 +6,18 @@ import { loadConfig, loadInbox, type InboxConfig } from "../src/config.js";
 import { ToolError } from "../src/errors.js";
 import { MemoryStore } from "../src/http/state.js";
 import type { InboxMessage, Mailbox } from "../src/inbox/mailbox.js";
-import { pollOnce, senderAllowed } from "../src/inbox/poller.js";
+import { simpleParser } from "mailparser";
+import { HeuristicExtractor } from "../src/assistant/extract/heuristic.js";
+import { documentsFrom, MAX_ATTEMPTS, pollOnce, senderAllowed } from "../src/inbox/poller.js";
 
 const SAM = "sam.purchasing@harbour.example";
 const config = loadConfig({ COMMERCE_BACKEND: "mock", COMMERCE_CALLER_EMAIL: SAM, COMMERCE_CONFIRM_SECRET: "test-secret" });
-const inbox: InboxConfig = { host: "imap.example.test", port: 993, user: "rfq@supplier.example", password: "x", folder: "INBOX", pollSeconds: 60, allowedSenders: ["harbour.example"] };
+const inbox: InboxConfig = { host: "imap.example.test", port: 993, user: "rfq@supplier.example", password: "x", folder: "INBOX", pollSeconds: 60, allowedSenders: ["harbour.example"], allowAnySender: false, maxDocsPerDay: 200 };
 
-const email = (opts: { from?: string; id?: string; subject?: string; body?: string; csv?: string; exe?: boolean }) => {
+const email = (opts: { from?: string; id?: string; subject?: string; body?: string; csv?: string; exe?: boolean; auth?: string[] }) => {
   const b = "BOUNDARY42";
   const parts = [
+    ...(opts.auth ?? []).map((a) => `Authentication-Results: ${a}`),
     `From: ${opts.from ?? "Buyer <purchasing@harbour.example>"}`,
     "To: rfq@supplier.example",
     `Subject: ${opts.subject ?? "RFQ HM-1"}`,
@@ -50,13 +53,13 @@ function fakeMailbox(raws: Buffer[]) {
   return { mb, messages };
 }
 
-async function run(raws: Buffer[], opts: { extractor?: Extractor; store?: MemoryStore } = {}) {
+async function run(raws: Buffer[], opts: { extractor?: Extractor; store?: MemoryStore; inbox?: Partial<InboxConfig> } = {}) {
   const store = opts.store ?? new MemoryStore();
   const { mb, messages } = fakeMailbox(raws);
   const calls: string[] = [];
   const result = await pollOnce({
     config,
-    inbox,
+    inbox: { ...inbox, ...opts.inbox },
     store,
     mailbox: mb,
     tools: async () => {
@@ -121,6 +124,73 @@ describe("inbox poller", () => {
   });
 });
 
+describe("inbox poller safety", () => {
+  const down = (code: "UPSTREAM_UNAVAILABLE" | "INVALID_INPUT"): Extractor => ({ name: "down", extract: async () => Promise.reject(new ToolError(code, "intake failed")) });
+
+  it("sets a message aside after repeated temporary failures, so it cannot block the queue", async () => {
+    const store = new MemoryStore();
+    for (let i = 1; i <= MAX_ATTEMPTS; i++) {
+      const r = await run([email({})], { store, extractor: down("UPSTREAM_UNAVAILABLE") });
+      expect(r.messages[0]!.state).toBe("unread");
+    }
+    const last = await run([email({})], { store, extractor: down("UPSTREAM_UNAVAILABLE") });
+    expect(last.messages[0]!.state).toBe("aside");
+  });
+
+  it("sets aside at once a document the intake cannot read", async () => {
+    const r = await run([email({})], { extractor: down("INVALID_INPUT") });
+    expect(r.messages[0]!.state).toBe("aside");
+  });
+
+  it("does not review a part twice when a retry follows a partial failure", async () => {
+    const store = new MemoryStore();
+    let calls = 0;
+    const flaky: Extractor = {
+      name: "flaky",
+      extract: async (doc) => {
+        calls++;
+        if (calls === 2) throw new ToolError("UPSTREAM_UNAVAILABLE", "down");
+        return new HeuristicExtractor().extract(doc);
+      },
+    };
+    const csv = "line,description,qty\n1,M8 x 30 A4 hex setscrew,100\n";
+    const long = "Please quote the attached, and also these:\n" + "1. M10 x 50 A2 hex bolt - 200 off\n".repeat(5);
+    const raw = email({ body: long, csv });
+    await run([raw], { store, extractor: flaky });
+    const second = await run([raw], { store, extractor: flaky });
+    expect(second.messages[0]!.state).toBe("done");
+    expect(second.queue).toHaveLength(2);
+    expect(calls).toBe(3);
+  });
+
+  it("stops at the daily document budget and leaves the rest for tomorrow", async () => {
+    const r = await run([email({ id: "a" }), email({ id: "b" })], { inbox: { maxDocsPerDay: 1 } });
+    expect(r.result).toMatchObject({ reviewed: 1, retry_later: 1 });
+    expect(r.messages.map((m) => m.state)).toEqual(["done", "unread"]);
+  });
+
+  it("with an authserv-id, reviews only mail whose own server saw DMARC pass for the From domain", async () => {
+    const mx = { authservId: "mx.supplier.example" };
+    const pass = await run([email({ auth: ["mx.supplier.example; spf=pass smtp.mailfrom=harbour.example; dmarc=pass (p=reject) header.from=harbour.example"] })], { inbox: mx });
+    expect(pass.messages[0]!.state).toBe("done");
+    const forged = await run([email({ auth: ["mx.supplier.example; dmarc=fail header.from=harbour.example"] })], { inbox: mx });
+    expect(forged.messages[0]!.state).toBe("aside");
+    // A header the sender added lower down does not count: only the topmost one is our server's.
+    const planted = await run([email({ auth: ["other.example; none", "mx.supplier.example; dmarc=pass header.from=harbour.example"] })], { inbox: mx });
+    expect(planted.messages[0]!.state).toBe("aside");
+    const otherDomain = await run([email({ auth: ["mx.supplier.example; dmarc=pass header.from=evil.example"] })], { inbox: mx });
+    expect(otherDomain.messages[0]!.state).toBe("aside");
+  });
+
+  it("skips a file named .pdf that is not a PDF, naming it only by number", async () => {
+    const mail = await simpleParser(email({ body: "See attached.", csv: undefined }));
+    mail.attachments.push({ filename: "evil <b>name</b>.pdf", contentType: "application/pdf", content: Buffer.from("not a pdf"), size: 9 } as never);
+    const { docs, skipped } = documentsFrom(mail, true);
+    expect(docs.every((d) => d.kind === "text")).toBe(true);
+    expect(skipped).toEqual(["attachment 1 (.pdf): not a PDF"]);
+  });
+});
+
 describe("inbox settings", () => {
   it("matches allowed addresses and domains, including subdomains", () => {
     expect(senderAllowed("a@harbour.example", ["harbour.example"])).toBe(true);
@@ -129,6 +199,12 @@ describe("inbox settings", () => {
     expect(senderAllowed("a@x.example", ["b@x.example"])).toBe(false);
     expect(senderAllowed(undefined, ["x.example"])).toBe(false);
     expect(senderAllowed("anyone@anywhere.example", [])).toBe(true);
+  });
+
+  it("refuses to start with no allowlist unless any sender is explicitly allowed", () => {
+    const base = { COMMERCE_INBOX_HOST: "imap.example.com", COMMERCE_INBOX_USER: "u", COMMERCE_INBOX_PASSWORD: "p" };
+    expect(() => loadInbox(base)).toThrow(/ALLOWED_SENDERS/);
+    expect(loadInbox({ ...base, COMMERCE_INBOX_ALLOW_ANY_SENDER: "on" }).allowAnySender).toBe(true);
   });
 
   it("requires credentials and validates the allowlist", () => {

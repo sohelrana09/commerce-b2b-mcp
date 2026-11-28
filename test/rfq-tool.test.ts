@@ -54,6 +54,14 @@ describe("review_rfq", () => {
     expect((await call("review_rfq", { name: "x", text: "   " })).data.error.code).toBe("INVALID_INPUT");
   });
 
+  it("limits each user to an hourly budget of reviews", async () => {
+    const { call } = await connect({ COMMERCE_CALLER_EMAIL: SAM });
+    const { MAX_REVIEWS_PER_HOUR } = await import("../src/assistant/summary.js");
+    for (let i = 0; i < MAX_REVIEWS_PER_HOUR; i++) expect((await call("review_rfq", { name: "x", text: "1. M8 x 30 A4 hex setscrew - 10 off" })).isError).toBe(false);
+    const over = await call("review_rfq", { name: "x", text: "1. M8 x 30 A4 hex setscrew - 10 off" });
+    expect(over.data.error).toMatchObject({ code: "RATE_LIMITED", retryable: true });
+  });
+
   it("acts only within the caller's company catalogue", async () => {
     const { call } = await connect({ COMMERCE_CALLER_EMAIL: "li.wei@acme.example" });
     const { data } = await call("review_rfq", { name: "rfq-01", text: golden("rfq-01-email.txt") });

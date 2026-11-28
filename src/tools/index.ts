@@ -5,7 +5,7 @@ import { issueToken, tokenLifetimeMs, verifyToken } from "../confirm.js";
 import { ToolError } from "../errors.js";
 import { parseFastenerText, scorePart } from "../normalize.js";
 import { toolsFor } from "../assistant/in-process.js";
-import { runReview, summarizeReview } from "../assistant/summary.js";
+import { MAX_REVIEWS_PER_HOUR, runReview, summarizeReview } from "../assistant/summary.js";
 import { defineTool, merchantText, type ToolDeps } from "./define.js";
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
@@ -369,12 +369,17 @@ export function registerAllTools(server: McpServer, deps: ToolDeps): string[] {
         text: z.string().max(200_000).optional().describe("The RFQ as text: an email body, pasted lines or CSV rows"),
         pdf_base64: z.string().max(28_000_000).optional().describe("The RFQ as a base64-encoded PDF (up to 20 MB)"),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      // Read-only on the store, but each call can be a paid model call: openWorldHint tells clients it reaches outside.
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: deps.config.rfq.extractor === "claude" },
       // The RFQ is customer data and can be large: the audit log records its size, never its text.
       auditInput: ({ name, text, pdf_base64 }) => ({ name, text_chars: text?.length ?? 0, pdf_base64_chars: pdf_base64?.length ?? 0 }),
-      handler: async ({ name, text, pdf_base64 }, { backend, caller, config, audit, ledger }) => {
+      handler: async ({ name, text, pdf_base64 }, { backend, caller, config, audit, ledger, counter }) => {
         if ((text === undefined) === (pdf_base64 === undefined)) {
           throw new ToolError("INVALID_INPUT", "Pass exactly one of text or pdf_base64.");
+        }
+        // The same hourly budget as the review page, per user.
+        if ((await counter("rfq-uploads", caller.email.toLowerCase(), 3600_000)) > MAX_REVIEWS_PER_HOUR) {
+          throw new ToolError("RATE_LIMITED", `At most ${MAX_REVIEWS_PER_HOUR} RFQ reviews an hour per user.`, "Try again later.");
         }
         if (text !== undefined && !text.trim()) throw new ToolError("INVALID_INPUT", "The RFQ text is empty.");
         if (pdf_base64 !== undefined && (!/^[A-Za-z0-9+/]+={0,2}$/.test(pdf_base64) || !pdf_base64.startsWith("JVBER"))) {
