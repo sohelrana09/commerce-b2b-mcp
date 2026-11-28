@@ -140,6 +140,11 @@ describe("RFQ web page", () => {
     await b.signIn(SAM);
     expect((await b.req("/rfq/new", { form: { name: "x", text: "M8x30 A4 hex x 10" } })).status).toBe(403);
     expect((await b.req("/rfq/new", { form: { csrf: await b.csrf(), name: "x", text: "M8x30" }, origin: "https://evil.example" })).status).toBe(403);
+    expect((await b.req("/rfq/new", { form: { csrf: await b.csrf(), name: "x", text: "M8x30" }, origin: "null" })).status).toBe(403);
+    // The page's own origin passes, and the page's referrer policy lets browsers send it.
+    const own = await b.req("/rfq/new", { form: { csrf: await b.csrf(), name: "x", text: "1. M8 x 30 A4 hex setscrew - 10 off" }, origin: base });
+    expect(own.status).toBe(303);
+    expect(own.headers.get("referrer-policy")).toBe("same-origin");
   });
 
   it("renders customer text as inert text", async () => {

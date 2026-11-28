@@ -73,7 +73,7 @@ header{background:#1f2a37;color:#fff;padding:.6rem 1.2rem;display:flex;gap:1.2re
 header a,header button{color:#fff;background:none;border:0;font:inherit;cursor:pointer;text-decoration:underline}
 header form{margin-left:auto}main{max-width:72rem;margin:1.5rem auto;padding:0 1rem}
 table{border-collapse:collapse;width:100%;background:#fff}th,td{border:1px solid #ddd;padding:.4rem .5rem;text-align:left;vertical-align:top}
-th{background:#f0f0f0}.review{background:#fff7e6}.ready{background:#eefaf0}.excluded{color:#777}
+th{background:#f0f0f0}td:nth-child(2){min-width:16rem}.review{background:#fff7e6}.ready{background:#eefaf0}.excluded{color:#777}
 .warn{border:2px solid #b45309;background:#fff7e6;padding:.75rem 1rem;margin:1rem 0}.err{color:#b00020}
 .ok{color:#166534}.muted{color:#666;font-size:.9em}code{background:#f3f3f3;padding:0 .2rem;white-space:pre-wrap;word-break:break-word}
 button,input,select,textarea{font:inherit}button.primary{background:#1f2a37;color:#fff;border:0;padding:.5rem 1rem;border-radius:4px;cursor:pointer}
@@ -104,7 +104,9 @@ export function rfqWebRouter(opts: WebOptions): Router {
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
       "X-Frame-Options": "DENY",
       "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer",
+      // same-origin, not no-referrer: with no-referrer, browsers send "Origin: null" on the page's own form posts,
+      // which the check below would refuse. Nothing is sent to other sites either way.
+      "Referrer-Policy": "same-origin",
       "Cache-Control": "no-store",
     });
     // Same-origin check for every write, in addition to the CSRF token.
