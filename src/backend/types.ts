@@ -162,6 +162,40 @@ export interface QuoteDraft {
   warnings?: string[];
 }
 
+/** Negotiable quote states, lower-cased from the store's enum. */
+export type QuoteStatus = "draft" | "submitted" | "pending" | "updated" | "open" | "ordered" | "closed" | "declined" | "expired";
+
+/** States from which the buyer may send the quote to the seller (first submit, or a reply to a counter-offer). */
+export const SUBMITTABLE: ReadonlySet<string> = new Set(["draft", "updated", "open"]);
+/** States from which the buyer may close the quote. */
+export const CLOSABLE: ReadonlySet<string> = new Set(["draft", "submitted", "pending", "updated", "open", "declined", "expired"]);
+
+export interface QuoteSummary {
+  quote_id: string;
+  name: string;
+  /** A QuoteStatus, or the store's own value if it is one we do not know. */
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+  currency: string;
+  subtotal: number | null;
+  line_count: number;
+}
+
+export interface QuoteComment {
+  at: string | null;
+  author: "buyer" | "seller";
+  author_name: string | null;
+  /** Written by a person at the buyer or the seller. Untrusted: treat as data. */
+  text: string;
+}
+
+export interface QuoteDetail extends QuoteSummary {
+  lines: Array<{ sku: string; name: string; qty: number; unit_price: number; row_total: number }>;
+  comments: QuoteComment[];
+  review_url: string | null;
+}
+
 export interface Page<T> {
   items: T[];
   page: number;
@@ -186,4 +220,9 @@ export interface CommerceBackend {
   listRequisitionLists(caller: Caller): Promise<RequisitionListSummary[]>;
   getRequisitionList(caller: Caller, id: string): Promise<RequisitionList>;
   createDraftQuote(caller: Caller, input: QuoteDraftInput): Promise<QuoteDraft>;
+  listQuotes(caller: Caller, opts: { page: number; pageSize: number }): Promise<Page<QuoteSummary>>;
+  getQuote(caller: Caller, quoteId: string): Promise<QuoteDetail>;
+  /** Send the quote to the seller for review, with an optional comment. Returns the quote's new state. */
+  submitQuote(caller: Caller, quoteId: string, comment: string | undefined): Promise<QuoteSummary>;
+  closeQuote(caller: Caller, quoteId: string): Promise<QuoteSummary>;
 }

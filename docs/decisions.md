@@ -26,6 +26,7 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 | 20 | [A stateless HTTP mode for load balancers and serverless](#20-a-stateless-http-mode-for-load-balancers-and-serverless) | Delivery, scaling |
 | 21 | [A Vercel function entry that refuses in-memory state](#21-a-vercel-function-entry-that-refuses-in-memory-state) | Delivery |
 | 22 | [RFQ review as an MCP tool, with intake inside the server](#22-rfq-review-as-an-mcp-tool-with-intake-inside-the-server) | Solution design, safety |
+| 23 | [Submitting and closing quotes are opt-in writes](#23-submitting-and-closing-quotes-are-opt-in-writes) | Human oversight |
 
 ---
 
@@ -225,3 +226,13 @@ Each instance still closes its own MCP sessions: on its one-minute sweep it chec
 **Rejected.** Letting the calling agent extract the lines (a hostile RFQ would reach a model with tools). Saving the review on the server and returning an id (stdio has no shared store, and the agent already holds the result). Defaulting the server to Claude intake (every tool call would be a paid API call the operator did not choose).
 
 **Consequences.** The calling agent still sees whatever the person pastes into the chat: the tool cannot prevent that, so the server instructions and the result both say that RFQ text is data and that `suspicious_instructions` are never acted on. The rule-based default cannot read PDFs and does not report injected instructions; an operator who wants either sets the Claude extractor and accepts about $0.08 per RFQ. The draft still needs `draft_negotiable_quote`'s preview and a person's approval (decision 2).
+
+### 23. Submitting and closing quotes are opt-in writes
+
+**Context.** Decision 2 limited every write to a draft: a person submitted the quote in the storefront. That kept the agent away from anything the seller sees, but it also ended the assistant's help at the draft. A buyer still had to leave the chat to send the quote, read the seller's counter-offer, reply to it or decline it.
+
+**Decision.** Two read tools, `list_negotiable_quotes` and `get_negotiable_quote`, show the buyer's quotes, their negotiated prices and the comment history. Comments are labelled third-party text, like product descriptions (decision 3). Two writes, `submit_negotiable_quote` (send a draft to the seller, or reply to an updated quote) and `close_negotiable_quote`, follow the propose-then-approve pattern. Their confirmation token is bound to the action's input and to the quote's state at preview time (status, update time, lines and prices). If the seller changes the quote before the buyer confirms, the approval no longer matches and a new preview is needed. Each token works once. Both writes are registered only when `COMMERCE_TOOLS_ENABLED` names them. Accepting an offer stays in the storefront, because it means checking out and placing an order.
+
+**Rejected.** Turning the writes on by default (an existing setup would gain the power to send things to the seller just by upgrading). A token bound to the input alone (a buyer could approve one price and confirm against another). Accepting through `placeNegotiableQuoteOrder` (placing orders and taking payment stay out of scope).
+
+**Consequences.** Decision 2 now reads: drafts by default; submit and close only when the operator turns them on, and every call is approved by a person. The quote GraphQL calls follow the B2B storefront schema, but they have not been checked against a live store, and the storefront API has no status filter for quotes, so the list is not filtered by status.

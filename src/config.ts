@@ -14,6 +14,10 @@ export const ALL_TOOLS = [
   "read_requisition_list",
   "draft_negotiable_quote",
   "review_rfq",
+  "list_negotiable_quotes",
+  "get_negotiable_quote",
+  "submit_negotiable_quote",
+  "close_negotiable_quote",
 ] as const;
 
 export type ToolName = (typeof ALL_TOOLS)[number];
@@ -22,7 +26,7 @@ export type ToolName = (typeof ALL_TOOLS)[number];
  * Writes that go past a draft (ADR 23). They are registered only when COMMERCE_TOOLS_ENABLED names them,
  * so an existing setup never gains them by upgrading.
  */
-export const OPT_IN_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([]);
+export const OPT_IN_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>(["submit_negotiable_quote", "close_negotiable_quote"]);
 
 export const RFQ_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 

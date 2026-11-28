@@ -158,3 +158,40 @@ export const setCartAsInactive = `
   mutation RestoreCart($cartId: String!) {
     setCartAsInactive(cartId: $cartId) { success error }
   }`;
+
+// Negotiable quotes, read and changed as the company user. Magento scopes them to the user and their role.
+const QUOTE_SUMMARY_FIELDS = `uid name status created_at updated_at items { uid } prices { subtotal_excluding_tax { value currency } }`;
+
+export const negotiableQuotes = `
+  query NegotiableQuotes($pageSize: Int!, $currentPage: Int!) {
+    negotiableQuotes(pageSize: $pageSize, currentPage: $currentPage, sort: { sort_field: UPDATED_AT, sort_direction: DESC }) {
+      total_count
+      items { ${QUOTE_SUMMARY_FIELDS} }
+    }
+  }`;
+
+export const negotiableQuote = `
+  query NegotiableQuote($uid: ID!) {
+    negotiableQuote(uid: $uid) {
+      uid name status created_at updated_at
+      items { uid quantity product { sku name } prices { price { value currency } row_total { value currency } } }
+      prices { subtotal_excluding_tax { value currency } }
+      comments { created_at creator_type author { firstname lastname } text }
+    }
+  }`;
+
+export const submitNegotiableQuote = `
+  mutation SubmitQuote($input: SendNegotiableQuoteForReviewInput!) {
+    sendNegotiableQuoteForReview(input: $input) { quote { ${QUOTE_SUMMARY_FIELDS} } }
+  }`;
+
+export const closeNegotiableQuotes = `
+  mutation CloseQuote($input: CloseNegotiableQuotesInput!) {
+    closeNegotiableQuotes(input: $input) {
+      result_status
+      operation_results {
+        __typename
+        ... on CloseNegotiableQuoteOperationFailure { quote_uid errors { __typename ... on ErrorInterface { message } } }
+      }
+    }
+  }`;

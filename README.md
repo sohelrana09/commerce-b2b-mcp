@@ -22,8 +22,8 @@ It covers the B2B layer that generic Magento MCP servers leave out: company acco
 **Key features**
 
 - **Caller-scoped, never admin:** every call acts as one signed-in company user, so Magento applies that company's shared catalog, prices and role permissions. There is no admin token, by design.
-- **Ten B2B tools:** company context and credit, attribute-aware part search, product detail, MSI availability, company price, orders, order status, requisition lists, draft negotiable quotes, and RFQ review.
-- **Propose, then approve:** the one write tool returns a priced preview and a signed confirmation token. It saves only a draft quote, and never submits it.
+- **Fourteen B2B tools:** company context and credit, attribute-aware part search, product detail, MSI availability, company price, orders, order status, requisition lists, draft negotiable quotes, RFQ review, and quote negotiation (list, read, and opt-in submit and close).
+- **Propose, then approve:** every write returns a preview and a signed, single-use confirmation token. By default the only write saves a draft quote; submitting to the seller and closing a quote are opt-in.
 - **RFQ quote assistant:** turns a customer's emailed or CSV request for quote into a priced review sheet, flags every line a person must check, then drafts the quote. A 151-line golden set guards it, and its safety number ("wrong lines marked ready") is held at 0.
 - **Local or hosted:** stdio for one user on their own machine, or Streamable HTTP with OAuth where each access token is one company user, on one instance or several sharing an encrypted Redis store. Every call is audited and traced.
 - **Verified on a real store:** Adobe Commerce 2.4.8-p5 with B2B 1.5.2-p3, on a copy of a production fastener catalogue (~17,000 products).
@@ -102,7 +102,12 @@ The animation is recorded from the real demo with [VHS](https://github.com/charm
 | `draft_negotiable_quote` | write | Preview, then save a **draft** quote after human approval. Never submits it |
 | `review_rfq` | read | Review a pasted RFQ (text, email, CSV or PDF): match, stock, price and flags per line, plus draft input for the ready lines. Intake runs inside the server with no tools |
 
-Placing orders, payments, customer edits and deletes are deliberately out of scope for v1.
+| `list_negotiable_quotes` | read | The buyer's quotes, most recently changed first, with status (`updated` means the seller has answered) |
+| `get_negotiable_quote` | read | One quote's lines, negotiated prices and buyer/seller comment history (comments labelled as data) |
+| `submit_negotiable_quote` | write, opt-in | Preview, then send a draft to the seller, or reply to a counter-offer, after human approval |
+| `close_negotiable_quote` | write, opt-in | Preview, then close a quote the buyer no longer wants, after human approval |
+
+The two opt-in writes are registered only when `COMMERCE_TOOLS_ENABLED` names them (ADR 23). Their approval is bound to the quote as it stood at preview time, so a seller change in between needs a new preview. Accepting an offer means checking out, which a person does in the storefront. Placing orders, payments, customer edits and deletes are deliberately out of scope.
 
 ### Things to ask
 
@@ -358,6 +363,7 @@ Some B2B versions have no requisition-list ACL resource. On those, only company 
 - **Not exposed to the storefront API:** shared catalog name, the "allow exceeding credit limit" setting, PO numbers on orders, and shipment dates. These come back as `null` rather than guessed values.
 - **Lead times:** MSI has no lead-time field. Set `COMMERCE_SOURCE_LEAD_TIMES` per source, or messages leave them out.
 - **Pack size and unit of measure** default to `1` and `each` until mapped.
+- **Quote negotiation:** the list, detail, submit and close calls follow the B2B storefront GraphQL schema but have not yet been checked against a live store. The storefront API cannot filter quotes by status.
 
 ## Remote transport (Streamable HTTP + OAuth)
 
