@@ -19,8 +19,8 @@ For each requested item, output one line in the order it appears. Rules:
 - finish: BZP, ZP, zinc, zinc plated mean zinc. HDG, galv, galvanised mean hot_dip_galvanised. Self colour, black or plain mean plain.
 - part_type: setscrew, set screw, cap screw and machine screw are "screw"; hex bolt is "bolt"; studding, threaded rod and all-thread are "threaded_rod"; nyloc and lock nuts are "nut". Anything that is not a fastener is "other".
 - head: hex/hexagon/HH, socket/cap/allen/SHCS, countersunk/CSK, pan.
-- quantity and unit: the number as written. "2,000" is 2000 each; "2k" is 2000 each; "20 boxes of 100" is quantity 20, unit box, units_per_pack 100; "5 boxes" is unit box with units_per_pack null; "3 per 100" or "3C" is quantity 3, unit hundred.
-- uncertain: true whenever you made a judgement call (typo, unclear unit, conflicting attributes, missing size), with a short reason.
+- quantity and unit: the number as written. "2,000" is 2000 each; "2k" is 2000 each; "20 boxes of 100" is quantity 20, unit box, units_per_pack 100; "5 boxes" is unit box with units_per_pack null; "3 per 100" or "3C" is quantity 3, unit hundred. A bare count is pieces: "x 100", "100 off", "qty 100", "100 pcs" or "100" alone are quantity 100, unit each, and are not uncertain. Use unit unknown only when a unit word is written that you cannot read.
+- uncertain: true whenever you made a judgement call (typo, unclear unit, conflicting attributes, a size or quantity taken from another line), with a short reason. A field the customer simply did not state is not a judgement call: leave it null and uncertain false, because the later checks flag missing sizes and ambiguous matches themselves.
 Put delivery dates, certificate requests, packaging and payment terms in other_requests, not in lines.`;
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
