@@ -376,6 +376,24 @@ With the HTTP transport and `COMMERCE_RFQ_WEB=on`, the server also serves a revi
 
 Saved reviews are kept per user in the state store for `COMMERCE_RFQ_RETENTION_DAYS` (default 14) after their last change. Set `COMMERCE_CORRECTIONS_LOG` to record each rep decision for the eval set (`docs/data-handling.md`). See ADR 24 for the session and CSRF design.
 
+### RFQs by email
+
+`rfq-inbox` reads a shared RFQ mailbox over IMAP (TLS) and puts each RFQ in one company user's queue on the review page. It never drafts or sends; a rep does that on the page. It needs the HTTP server's Redis settings plus one company user's store settings (as for stdio) and:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `COMMERCE_INBOX_HOST`, `COMMERCE_INBOX_PORT` | `993` | IMAP server (TLS only) |
+| `COMMERCE_INBOX_USER`, `COMMERCE_INBOX_PASSWORD` | | Mailbox login; use an app password and keep it in `.env` |
+| `COMMERCE_INBOX_FOLDER`, `COMMERCE_INBOX_DONE_FOLDER` | `INBOX`, unset | Where to read, and where to move processed mail (unset: mark it read) |
+| `COMMERCE_INBOX_ALLOWED_SENDERS` | empty (anyone, with a warning) | Comma-separated addresses or domains whose mail is reviewed |
+| `COMMERCE_INBOX_POLL_SECONDS` | `120` | Time between polls |
+
+```bash
+rfq-inbox --once
+```
+
+With `COMMERCE_RFQ_EXTRACTOR=claude`, every email is a paid intake call (about $0.08). See ADR 25.
+
 ## Remote transport (Streamable HTTP + OAuth)
 
 stdio runs the server as one fixed company user on the user's own machine. For a hosted server that many users share, run it over Streamable HTTP. Each user signs in with OAuth, and **each access token is one company user**. So every session is scoped exactly as stdio is (decision 1 still holds).

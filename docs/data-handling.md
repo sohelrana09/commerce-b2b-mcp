@@ -20,6 +20,7 @@ An RFQ is a business email or file, but it usually carries **personal data**: th
 | 8 | Diagnostics: store error messages, failed tool calls | stderr | Merchant (operator) | Operator's log retention | Log rotation |
 | 9 | Golden eval set and published results | This repository | Project | Permanent | Synthetic data only, so nothing to delete |
 | 10 | Saved reviews from the web page (ADR 24): the same fields as a run file, plus the rep's choices, owned by one company user | The server's state store: memory, or Redis with every value encrypted | Merchant (operator) | `COMMERCE_RFQ_RETENTION_DAYS` (default 14) after the last change | Delete it on the page; `rfq-quote forget-reviews --owner <email> [--older-than <days>]` (Redis); or wait for expiry |
+| 11 | Inbox mail (ADR 25): the email and its attachments, read to make a saved review (row 10); a hash of each Message-ID so it is not reviewed twice | The mailbox (the email stays there or in the done folder); the hash in the state store | Merchant | The mailbox's own rules; the hash for the retention period | Delete the email in the mailbox; the hash expires |
 
 Not stored anywhere: passwords (the sign-in page passes them to the store's `generateCustomerToken` and keeps nothing), the Magento customer token outside server memory or the encrypted Redis store, and the original RFQ inside the run file (only the extracted fields are kept).
 

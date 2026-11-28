@@ -260,6 +260,41 @@ function loadSessions(raw: string | undefined): HttpConfig["sessions"] {
   return v;
 }
 
+/** The mailbox the inbox poller reads RFQs from (ADR 25). Only TLS connections. */
+export interface InboxConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  folder: string;
+  /** Processed mail is moved here; unset: it is only marked as read. */
+  doneFolder?: string;
+  pollSeconds: number;
+  /** Lower-cased addresses ("buyer@x.example") and domains ("x.example"). Empty: mail from anyone is reviewed. */
+  allowedSenders: string[];
+}
+
+export function loadInbox(env: NodeJS.ProcessEnv): InboxConfig {
+  const host = env.COMMERCE_INBOX_HOST;
+  if (!host) throw new Error("COMMERCE_INBOX_HOST is required, e.g. imap.example.com");
+  if (!/^[A-Za-z0-9.-]{1,253}$/.test(host)) throw new Error("COMMERCE_INBOX_HOST must be a host name.");
+  const user = env.COMMERCE_INBOX_USER;
+  const password = env.COMMERCE_INBOX_PASSWORD;
+  if (!user || !password) throw new Error("COMMERCE_INBOX_USER and COMMERCE_INBOX_PASSWORD (an app password) are required. Keep them in .env.");
+  const allowed = (parseList(env.COMMERCE_INBOX_ALLOWED_SENDERS) ?? []).map((s) => s.toLowerCase().replace(/^@/, ""));
+  for (const a of allowed) if (!/^([^@\s]+@)?[a-z0-9.-]+\.[a-z]{2,}$/.test(a)) throw new Error(`COMMERCE_INBOX_ALLOWED_SENDERS has an entry that is not an address or domain: "${a}"`);
+  return {
+    host,
+    port: intSetting("COMMERCE_INBOX_PORT", env.COMMERCE_INBOX_PORT, 993, 1, 65535),
+    user,
+    password,
+    folder: env.COMMERCE_INBOX_FOLDER || "INBOX",
+    ...(env.COMMERCE_INBOX_DONE_FOLDER ? { doneFolder: env.COMMERCE_INBOX_DONE_FOLDER } : {}),
+    pollSeconds: intSetting("COMMERCE_INBOX_POLL_SECONDS", env.COMMERCE_INBOX_POLL_SECONDS, 120, 30, 86_400),
+    allowedSenders: allowed,
+  };
+}
+
 export function loadRfqConfig(env: NodeJS.ProcessEnv): RfqConfig {
   const extractor = env.COMMERCE_RFQ_EXTRACTOR ?? "heuristic";
   if (extractor !== "heuristic" && extractor !== "claude") {

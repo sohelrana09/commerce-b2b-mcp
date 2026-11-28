@@ -25,6 +25,7 @@ Before finishing any change: `npm run typecheck && npm test`. CI runs both on No
 - `src/server.ts`, `src/tools/`: MCP tools. Each tool is declared with `defineTool` in `src/tools/define.ts`, which audits, traces and maps errors for it.
 - `src/backend/`: `mock/` (in-memory store and fixtures) and `paas/` (GraphQL client for a real store, acting as one company user).
 - `src/http/`: Streamable HTTP transport, OAuth provider, sign-in page, session handling; `web.ts` is the RFQ review page at `/rfq` (ADR 24), `throttle.ts` the shared sign-in lockout.
+- `src/inbox/`: `rfq-inbox`, which reviews RFQ emails from an IMAP mailbox into the review page's queue (ADR 25). It never drafts.
 - `src/audit.ts`, `src/trace.ts`: audit log and per-call tracing.
 - `src/assistant/`: the RFQ quote assistant (intake extractors, pipeline, CLI, corrections, eval, pricing); `summary.ts` runs it inside the server, `reviews.ts` stores saved reviews.
 - `evals/golden/`: synthetic golden set. `evals/results/`: committed Markdown summaries (JSON is ignored).
@@ -35,7 +36,7 @@ Before finishing any change: `npm run typecheck && npm test`. CI runs both on No
 These protect real customer data and the merchant's store. They are not style preferences.
 
 - **Caller-scoped access only.** Every store call acts as one signed-in company user (ADR 1). Never add an admin token or an integration token, not even for a script or a test.
-- **Credentials stay in ignored files**: `.env`, `.env.*` (except `.env.example`), `.mcp.json`, `scripts/`. Never print, log or commit a token, password or API key. Any audit field whose key contains token, secret, password or authorization must stay redacted.
+- **Credentials stay in ignored files** (store, Anthropic and mailbox credentials alike): `.env`, `.env.*` (except `.env.example`), `.mcp.json`, `scripts/`. Never print, log or commit a token, password or API key. Any audit field whose key contains token, secret, password or authorization must stay redacted.
 - **No client names, store URLs or customer data in committed files.** Test data is synthetic (Harbour Marine Engineering in the mock store). Before committing, check the staged diff for anything that names a real merchant or a real person.
 - **No paid API runs without the person's go-ahead**: that covers `--extractor claude`, `--sweep` and `rfq-quote review` without `--extractor heuristic`. Say what will run and the rough cost first (about $0.08 per RFQ, $0.70 per golden-set run at Opus 5.5 medium).
 - **The safety gate stays at zero.** "Wrong lines marked ready" must be 0 on the golden set; a test enforces it. Never loosen a flag rule or a threshold in `src/assistant/eval/targets.ts` to make a run pass. If a change moves another target, update `docs/service-targets.md` in the same change.

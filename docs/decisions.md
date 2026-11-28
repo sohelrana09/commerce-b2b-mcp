@@ -28,6 +28,7 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 | 22 | [RFQ review as an MCP tool, with intake inside the server](#22-rfq-review-as-an-mcp-tool-with-intake-inside-the-server) | Solution design, safety |
 | 23 | [Submitting and closing quotes are opt-in writes](#23-submitting-and-closing-quotes-are-opt-in-writes) | Human oversight |
 | 24 | [A review page for reps, beside the MCP endpoint](#24-a-review-page-for-reps-beside-the-mcp-endpoint) | Delivery, security |
+| 25 | [RFQs from an IMAP inbox, reviewed but never drafted](#25-rfqs-from-an-imap-inbox-reviewed-but-never-drafted) | Intake, safety |
 
 ---
 
@@ -247,3 +248,20 @@ Each instance still closes its own MCP sessions: on its one-minute sweep it chec
 **Rejected.** Reusing the OAuth bearer tokens in the browser (they would have to live in script-readable storage). A separate front-end app (a second deployment and an API surface for one page). Letting a rep type any SKU (a typo could put the wrong part in a quote; the rep chooses among the parts the matcher offered, and a part it never found is a "leave out" and a manual quote). A multipart upload parser (another dependency; the page reads the file into a form field instead).
 
 **Consequences.** The server gains a second sign-in surface, so it is off by default and shares the lockout. A rep's choice settles a line's matching flags, but a line is ready only with a store price. The eval's safety number covers the pipeline before any rep edit, and the rep owns each edit. Saved reviews hold customer data on the server for the retention period (see `docs/data-handling.md`). Without JavaScript, a rep can still paste text but cannot attach a file.
+
+### 25. RFQs from an IMAP inbox, reviewed but never drafted
+
+**Context.** Most RFQs arrive by email. With the review page (decision 24), a rep still had to copy each one in. The obvious step is to read a shared RFQ mailbox. But mail is the least trusted input there is: anyone can send it, it can be large, and its attachments can be anything.
+
+**Decision.** `rfq-inbox` is a separate process. It reads unread mail over IMAP with TLS only, using an app password kept in `.env`. Each poll, it:
+- skips any message it has seen before (by Message-ID);
+- sets aside mail from senders outside `COMMERCE_INBOX_ALLOWED_SENDERS` (addresses or domains);
+- reads up to 5 attachments of the types the assistant reads (text, CSV, email, and PDF only with Claude intake), each 20 MB at most, or else the body;
+- runs the review as the one company user it is configured for, through the server's own tools;
+- saves the result to that user's queue in the shared Redis store, where the review page shows it.
+
+It never drafts or sends anything. A person does that on the page, with the usual preview and approval. Processed mail is moved to `COMMERCE_INBOX_DONE_FOLDER`, or marked read. When the store or the intake model is down, the message is left unread for the next poll. A lease in the store keeps two pollers off one mailbox. Logs carry counts and reasons, never message text, addresses or connection details. IMAP is generic, so it works with Microsoft 365, Gmail, Zoho or any host.
+
+**Rejected.** Running the poller inside the HTTP server. Over HTTP, the config forbids a fixed store identity, so that no client can share one (decision 11). The poller needs exactly one, so it gets its own process and settings. Drafting automatically from mail (a hostile or mistaken email would reach the store without a person). Provider-specific APIs such as Microsoft Graph or the Gmail API (more setup and tied to one vendor; IMAP covers them all). Storing the original email (the review keeps what the rep needs; decision 18).
+
+**Consequences.** The web page and the poller must share Redis (`COMMERCE_STATE_STORE=redis`). With an empty allowlist, anyone who knows the address can fill the queue, so startup warns. With Claude intake, every email is a paid call, so startup says so. If a multi-part email fails partway with a temporary error, the parts already reviewed are reviewed again on the retry. Two new dependencies, `imapflow` and `mailparser`, both MIT, are pinned to exact versions.
