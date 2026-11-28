@@ -22,7 +22,7 @@ It covers the B2B layer that generic Magento MCP servers leave out: company acco
 **Key features**
 
 - **Caller-scoped, never admin:** every call acts as one signed-in company user, so Magento applies that company's shared catalog, prices and role permissions. There is no admin token, by design.
-- **Nine B2B tools:** company context and credit, attribute-aware part search, product detail, MSI availability, company price, orders, order status, requisition lists, and draft negotiable quotes.
+- **Ten B2B tools:** company context and credit, attribute-aware part search, product detail, MSI availability, company price, orders, order status, requisition lists, draft negotiable quotes, and RFQ review.
 - **Propose, then approve:** the one write tool returns a priced preview and a signed confirmation token. It saves only a draft quote, and never submits it.
 - **RFQ quote assistant:** turns a customer's emailed or CSV request for quote into a priced review sheet, flags every line a person must check, then drafts the quote. A 151-line golden set guards it, and its safety number ("wrong lines marked ready") is held at 0.
 - **Local or hosted:** stdio for one user on their own machine, or Streamable HTTP with OAuth where each access token is one company user, on one instance or several sharing an encrypted Redis store. Every call is audited and traced.
@@ -100,6 +100,7 @@ The animation is recorded from the real demo with [VHS](https://github.com/charm
 | `get_order_status` | read | Lines, shipped qty and tracking for one of this company's orders |
 | `read_requisition_list` | read | The user's saved reorder lists, or one list's items |
 | `draft_negotiable_quote` | write | Preview, then save a **draft** quote after human approval. Never submits it |
+| `review_rfq` | read | Review a pasted RFQ (text, email, CSV or PDF): match, stock, price and flags per line, plus draft input for the ready lines. Intake runs inside the server with no tools |
 
 Placing orders, payments, customer edits and deletes are deliberately out of scope for v1.
 
@@ -162,6 +163,15 @@ node dist/assistant/cli.js correct evals/golden/rfq-01-email.txt.run.json --line
 With no settings, it runs against the mock store as a buyer at *Harbour Marine Engineering*. That company's catalogue is a generated range of about 330 metric fasteners (`src/backend/mock/reference-catalog.ts`).
 
 `--extractor claude` (the default) uses Claude to read the RFQ. It needs `ANTHROPIC_API_KEY` or an `ant auth login` profile.
+
+### From an MCP client
+
+The same review is available in chat as the `review_rfq` tool. Paste the RFQ (or attach it as a base64 PDF) and the server reads it with its own intake step, which has no tools, then returns each line with its flags and a `draft_input` for `draft_negotiable_quote`. Nothing is saved until a person approves the draft preview.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `COMMERCE_RFQ_EXTRACTOR` | `heuristic` | `heuristic` (free, text and CSV only) or `claude` (reads PDFs and reports injected instructions; about $0.08 per RFQ, needs `ANTHROPIC_API_KEY`) |
+| `COMMERCE_RFQ_MODEL`, `COMMERCE_RFQ_EFFORT` | `claude-opus-5-5`, `medium` | Claude intake model and effort |
 
 ### How the assistant works
 

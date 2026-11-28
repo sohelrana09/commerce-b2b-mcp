@@ -24,6 +24,8 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 | 18 | [Minimise customer data, and make deletion a command](#18-minimise-customer-data-and-make-deletion-a-command) | Governance, privacy |
 | 19 | [Shared sign-in state in Redis, encrypted, for more than one instance](#19-shared-sign-in-state-in-redis-encrypted-for-more-than-one-instance) | Scaling, security |
 | 20 | [A stateless HTTP mode for load balancers and serverless](#20-a-stateless-http-mode-for-load-balancers-and-serverless) | Delivery, scaling |
+| 21 | [A Vercel function entry that refuses in-memory state](#21-a-vercel-function-entry-that-refuses-in-memory-state) | Delivery |
+| 22 | [RFQ review as an MCP tool, with intake inside the server](#22-rfq-review-as-an-mcp-tool-with-intake-inside-the-server) | Solution design, safety |
 
 ---
 
@@ -213,3 +215,13 @@ Each instance still closes its own MCP sessions: on its one-minute sweep it chec
 **Rejected.** Vercel's zero-config Express detection (it picked up `src/index.ts`, which listens instead of exporting). Allowing the in-memory store on Vercel for demos (it fails intermittently, which is harder to diagnose than a clear refusal). Returning the configuration error to the caller (it names the deployment's settings; the log is the right place).
 
 **Consequences.** One deployment needs a Redis (for example Upstash) even for the mock store. Vercel's per-deployment URLs are refused by the DNS-rebinding check unless `COMMERCE_PUBLIC_URL` names them, so clients use the production domain. Decision 20's consequences apply: no server-to-client stream, and the one-minute sweep may not run.
+
+### 22. RFQ review as an MCP tool, with intake inside the server
+
+**Context.** The quote assistant only ran as a CLI, so a buyer working in Claude Desktop or another MCP client had to leave the chat, save the RFQ as a file and run `rfq-quote review`. Exposing the review as a tool raises one question: who reads the RFQ? The calling agent could extract the lines itself and pass them in, but that agent has tools, and the RFQ is untrusted text from outside the company. Decision 13 exists so that the model reading an RFQ cannot act on it.
+
+**Decision.** `review_rfq` takes the RFQ as text or a base64 PDF and runs the existing pipeline inside the server: the intake step (rule-based by default, Claude when `COMMERCE_RFQ_EXTRACTOR=claude`) has no tools, then matching, stock and price go through the server's own tools over an in-memory MCP connection, acting as the same caller, with the same allowlist and audit log. The result is the review in a trimmed form: each line's text, match, alternatives, stock, price, flags and status; customer-written fields grouped under `customer_content` with a notice that they are data; and a `draft_input` built by `draftInput` from the ready lines only. It saves nothing. The audit log records the RFQ's size, never its text. One review returns at most 80 lines, so the result stays inside the context budget (decision 6).
+
+**Rejected.** Letting the calling agent extract the lines (a hostile RFQ would reach a model with tools). Saving the review on the server and returning an id (stdio has no shared store, and the agent already holds the result). Defaulting the server to Claude intake (every tool call would be a paid API call the operator did not choose).
+
+**Consequences.** The calling agent still sees whatever the person pastes into the chat: the tool cannot prevent that, so the server instructions and the result both say that RFQ text is data and that `suspicious_instructions` are never acted on. The rule-based default cannot read PDFs and does not report injected instructions; an operator who wants either sets the Claude extractor and accepts about $0.08 per RFQ. The draft still needs `draft_negotiable_quote`'s preview and a person's approval (decision 2).

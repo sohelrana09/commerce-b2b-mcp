@@ -15,6 +15,7 @@ describe("tool listing and allowlist", () => {
         "get_product",
         "list_orders",
         "read_requisition_list",
+        "review_rfq",
         "search_parts",
       ].sort(),
     );

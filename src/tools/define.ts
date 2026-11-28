@@ -28,6 +28,8 @@ export interface ToolSpec<Shape extends z.ZodRawShape> {
   description: string;
   input: Shape;
   annotations: ToolAnnotations;
+  /** What the audit log records as the input. Default: the input itself (then redacted). Use it for bulky or customer-written fields. */
+  auditInput?: (args: z.infer<z.ZodObject<Shape>>) => unknown;
   handler: (args: z.infer<z.ZodObject<Shape>>, deps: ToolDeps) => Promise<unknown>;
 }
 
@@ -88,7 +90,7 @@ export function defineTool<Shape extends z.ZodRawShape>(server: McpServer, deps:
         caller: deps.caller.email,
         company_id: await company(),
         tool: spec.name,
-        input: args,
+        input: spec.auditInput ? spec.auditInput(args) : args,
         outcome: errorCode ? "error" : "ok",
         ...(errorCode ? { error_code: errorCode } : {}),
         result_bytes: Buffer.byteLength(text, "utf8"),

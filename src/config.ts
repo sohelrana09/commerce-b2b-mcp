@@ -13,9 +13,29 @@ export const ALL_TOOLS = [
   "get_order_status",
   "read_requisition_list",
   "draft_negotiable_quote",
+  "review_rfq",
 ] as const;
 
 export type ToolName = (typeof ALL_TOOLS)[number];
+
+/**
+ * Writes that go past a draft (ADR 23). They are registered only when COMMERCE_TOOLS_ENABLED names them,
+ * so an existing setup never gains them by upgrading.
+ */
+export const OPT_IN_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([]);
+
+export const RFQ_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export interface RfqConfig {
+  /** Who reads the RFQ inside the server. "heuristic" is free; "claude" is a paid API call per RFQ. */
+  extractor: "heuristic" | "claude";
+  model?: string;
+  effort?: (typeof RFQ_EFFORTS)[number];
+  /** How long saved reviews are kept (web page and inbox). */
+  retentionDays: number;
+  /** JSONL file for rep corrections from the web page. Unset: corrections are not recorded. */
+  correctionsLog?: string;
+}
 
 export interface HttpConfig {
   host: string;
@@ -74,6 +94,7 @@ export interface Config {
   paas?: Omit<PaasOptions, "fetch" | "auth"> & { auth?: PaasOptions["auth"] };
   /** Present when transport is "http". */
   http?: HttpConfig;
+  rfq: RfqConfig;
 }
 
 const ATTRIBUTE_KEYS: AttributeKey[] = ["part_type", "head", "thread", "length_mm", "material", "grade", "finish", "pack_size"];
@@ -172,7 +193,7 @@ function resolveTools(enabled?: string[], disabled?: string[]): Set<ToolName> {
   }
   if (enabled) return new Set(enabled as ToolName[]);
   const off = new Set(disabled ?? []);
-  return new Set(ALL_TOOLS.filter((t) => !off.has(t)));
+  return new Set(ALL_TOOLS.filter((t) => !off.has(t) && !OPT_IN_TOOLS.has(t)));
 }
 
 function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfig {
@@ -226,7 +247,27 @@ function loadSessions(raw: string | undefined): HttpConfig["sessions"] {
   return v;
 }
 
-function loadState(env: NodeJS.ProcessEnv): StateConfig {
+export function loadRfq(env: NodeJS.ProcessEnv): RfqConfig {
+  const extractor = env.COMMERCE_RFQ_EXTRACTOR ?? "heuristic";
+  if (extractor !== "heuristic" && extractor !== "claude") {
+    throw new Error(`COMMERCE_RFQ_EXTRACTOR must be "heuristic" or "claude", got "${extractor}"`);
+  }
+  const effort = env.COMMERCE_RFQ_EFFORT;
+  if (effort && !(RFQ_EFFORTS as readonly string[]).includes(effort)) {
+    throw new Error(`COMMERCE_RFQ_EFFORT must be one of ${RFQ_EFFORTS.join(", ")}, got "${effort}"`);
+  }
+  const model = env.COMMERCE_RFQ_MODEL;
+  if (model !== undefined && !/^[a-z0-9][a-z0-9.\-]{2,80}$/.test(model)) throw new Error("COMMERCE_RFQ_MODEL must be a model id such as claude-opus-5-5.");
+  return {
+    extractor,
+    ...(model ? { model } : {}),
+    ...(effort ? { effort: effort as NonNullable<RfqConfig["effort"]> } : {}),
+    retentionDays: intSetting("COMMERCE_RFQ_RETENTION_DAYS", env.COMMERCE_RFQ_RETENTION_DAYS, 14, 1, 365),
+    ...(env.COMMERCE_CORRECTIONS_LOG ? { correctionsLog: env.COMMERCE_CORRECTIONS_LOG } : {}),
+  };
+}
+
+export function loadState(env: NodeJS.ProcessEnv): StateConfig {
   const kind = env.COMMERCE_STATE_STORE ?? "memory";
   if (kind === "memory") {
     if (env.COMMERCE_REDIS_URL) throw new Error('COMMERCE_REDIS_URL is set but COMMERCE_STATE_STORE is not "redis". Set COMMERCE_STATE_STORE=redis to use it.');
@@ -297,6 +338,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxPageSize: 20,
     ...(backend === "paas" ? { paas: loadPaas(env, callerEmail, perSession) } : {}),
     ...(perSession ? { http: loadHttp(env, backend) } : {}),
+    rfq: loadRfq(env),
   };
 }
 

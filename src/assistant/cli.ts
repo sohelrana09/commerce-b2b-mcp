@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { connectStdio, type CommerceTools } from "./commerce.js";
 import { forgetCorrections, recordCorrection } from "./corrections.js";
-import { ClaudeExtractor, EFFORTS, type Effort } from "./extract/claude.js";
-import { HeuristicExtractor } from "./extract/heuristic.js";
+import { EFFORTS, type Effort } from "./extract/claude.js";
+import { extractorFromConfig } from "./extract/factory.js";
 import { loadRfq } from "./extract/input.js";
 import type { Extractor } from "./extract/schema.js";
 import { draftInput, parseRun, reviewRfq } from "./pipeline.js";
@@ -44,11 +44,15 @@ async function withTools<T>(fn: (tools: CommerceTools) => Promise<T>): Promise<T
 }
 
 function extractorFor(kind: string | undefined): Extractor {
-  if (kind === "heuristic") return new HeuristicExtractor();
-  if (kind && kind !== "claude") throw new Error(`Unknown extractor "${kind}". Use claude or heuristic.`);
+  if (kind && kind !== "claude" && kind !== "heuristic") throw new Error(`Unknown extractor "${kind}". Use claude or heuristic.`);
   const effort = process.env.RFQ_EFFORT;
   if (effort && !(EFFORTS as readonly string[]).includes(effort)) throw new Error(`RFQ_EFFORT must be one of ${EFFORTS.join(", ")}.`);
-  return new ClaudeExtractor({ ...(process.env.RFQ_MODEL ? { model: process.env.RFQ_MODEL } : {}), ...(effort ? { effort: effort as Effort } : {}) });
+  // The CLI defaults to Claude intake (a paid call); the server defaults to the free heuristic.
+  return extractorFromConfig({
+    extractor: kind === "heuristic" ? "heuristic" : "claude",
+    ...(process.env.RFQ_MODEL ? { model: process.env.RFQ_MODEL } : {}),
+    ...(effort ? { effort: effort as Effort } : {}),
+  });
 }
 
 async function review(args: string[]) {
