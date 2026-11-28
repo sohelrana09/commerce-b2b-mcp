@@ -5,11 +5,14 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { connectStdio, type CommerceTools } from "./commerce.js";
 import { forgetCorrections, recordCorrection } from "./corrections.js";
-import { ClaudeExtractor, EFFORTS, type Effort } from "./extract/claude.js";
-import { HeuristicExtractor } from "./extract/heuristic.js";
+import { EFFORTS, type Effort } from "./extract/claude.js";
+import { extractorFromConfig } from "./extract/factory.js";
 import { loadRfq } from "./extract/input.js";
 import type { Extractor } from "./extract/schema.js";
+import { loadRfqConfig, loadState } from "../config.js";
+import { RedisStore } from "../http/state.js";
 import { draftInput, parseRun, reviewRfq } from "./pipeline.js";
+import { ReviewStore } from "./reviews.js";
 import { renderReview } from "./report.js";
 
 const USAGE = `rfq-quote: turn a customer RFQ into a reviewed draft negotiable quote.
@@ -19,6 +22,9 @@ const USAGE = `rfq-quote: turn a customer RFQ into a reviewed draft negotiable q
   rfq-quote correct <run.json> --line <ref> (--sku <SKU> | --none) [--qty <each>] [--note "..."] [--log corrections.jsonl]
   rfq-quote forget (--document <name> | --older-than <days>) [--log corrections.jsonl]
                    delete corrections for one RFQ (erasure request) or past a retention period
+  rfq-quote forget-reviews --owner <email> [--older-than <days>]
+                   delete one user's saved reviews (web page and inbox) from the shared Redis store;
+                   needs the same COMMERCE_STATE_STORE, COMMERCE_REDIS_URL and COMMERCE_STATE_KEY as the server
 
 The assistant talks to the store only through commerce-b2b-mcp, using the same COMMERCE_* settings.
 With no settings it runs against the built-in mock store as a Harbour Marine Engineering buyer.
@@ -44,11 +50,15 @@ async function withTools<T>(fn: (tools: CommerceTools) => Promise<T>): Promise<T
 }
 
 function extractorFor(kind: string | undefined): Extractor {
-  if (kind === "heuristic") return new HeuristicExtractor();
-  if (kind && kind !== "claude") throw new Error(`Unknown extractor "${kind}". Use claude or heuristic.`);
+  if (kind && kind !== "claude" && kind !== "heuristic") throw new Error(`Unknown extractor "${kind}". Use claude or heuristic.`);
   const effort = process.env.RFQ_EFFORT;
   if (effort && !(EFFORTS as readonly string[]).includes(effort)) throw new Error(`RFQ_EFFORT must be one of ${EFFORTS.join(", ")}.`);
-  return new ClaudeExtractor({ ...(process.env.RFQ_MODEL ? { model: process.env.RFQ_MODEL } : {}), ...(effort ? { effort: effort as Effort } : {}) });
+  // The CLI defaults to Claude intake (a paid call); the server defaults to the free heuristic.
+  return extractorFromConfig({
+    extractor: kind === "heuristic" ? "heuristic" : "claude",
+    ...(process.env.RFQ_MODEL ? { model: process.env.RFQ_MODEL } : {}),
+    ...(effort ? { effort: effort as Effort } : {}),
+  });
 }
 
 async function review(args: string[]) {
@@ -146,8 +156,24 @@ async function forget(args: string[]) {
   console.log(`Removed ${n} correction record${n === 1 ? "" : "s"} from ${values.log}. Delete the matching .run.json and review files separately.`);
 }
 
+async function forgetReviews(args: string[]) {
+  const { values } = parseArgs({ args, options: { owner: { type: "string" }, "older-than": { type: "string", default: "0" } } });
+  const days = Number(values["older-than"]);
+  if (!values.owner || !(days >= 0)) throw new Error(USAGE);
+  const state = loadState(process.env);
+  if (state.kind !== "redis") throw new Error("Saved reviews in memory end with the server process. Set COMMERCE_STATE_STORE=redis to reach a shared store.");
+  const store = new RedisStore({ url: state.url, secret: state.secret, prefix: state.prefix });
+  try {
+    await store.ready();
+    const n = await new ReviewStore(store, loadRfqConfig(process.env).retentionDays).forget(values.owner, days);
+    console.log(`Removed ${n} saved review${n === 1 ? "" : "s"} for ${values.owner}.`);
+  } finally {
+    await store.close();
+  }
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
-const commands: Record<string, (a: string[]) => Promise<void>> = { review, draft, correct, forget };
+const commands: Record<string, (a: string[]) => Promise<void>> = { review, draft, correct, forget, "forget-reviews": forgetReviews };
 const run = cmd ? commands[cmd] : undefined;
 if (!run) {
   console.log(USAGE);

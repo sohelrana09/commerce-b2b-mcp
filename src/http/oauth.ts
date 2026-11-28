@@ -12,6 +12,7 @@ import type { AuthorizationParams, OAuthServerProvider } from "@modelcontextprot
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { MemoryStore, type StateStore } from "./state.js";
+import { MAX_EMAIL_LENGTH, reserveSignIn } from "./throttle.js";
 
 /** The one scope this server issues: act as the signed-in company user. */
 export const SCOPE = "commerce";
@@ -85,13 +86,8 @@ const MAX_CLIENT_NAME = 100;
 const MAX_REDIRECT_URIS = 5;
 const MAX_REDIRECT_URI_LENGTH = 2048;
 const MAX_METADATA_BYTES = 4096;
-const MAX_FAILURES = 5;
-/** Per email across all addresses, so rotating addresses does not give unlimited guesses. */
-const MAX_EMAIL_FAILURES = 20;
 /** Failed sign-ins one sign-in request survives before it must be started again. */
 const MAX_REQUEST_FAILURES = 10;
-const MAX_EMAIL_LENGTH = 254;
-const FAILURE_WINDOW_MS = 15 * 60_000;
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** PKCE S256: base64url(SHA-256(verifier)) equals the stored challenge. */
@@ -127,7 +123,20 @@ export class CommerceOAuthProvider implements OAuthServerProvider {
 
   constructor(private readonly opts: ProviderOptions) {
     this.now = opts.now ?? Date.now;
-    this.store = opts.store ?? new MemoryStore({ now: this.now, maxEntries: { client: MAX_CLIENTS, failure: 50_000, "request-failure": 50_000 } });
+    // Bounded namespaces: a flood of registrations, failed sign-ins, sign-in page loads or uploads cannot grow memory without limit.
+    const maxEntries = {
+      client: MAX_CLIENTS,
+      failure: 50_000,
+      "request-failure": 50_000,
+      // The RFQ review page (ADR 24).
+      "web-login": 10_000,
+      "web-session": 10_000,
+      "rfq-uploads": 50_000,
+      "rfq-review": 50_000,
+      "rfq-index": 50_000,
+      "rfq-index-lock": 10_000,
+    };
+    this.store = opts.store ?? new MemoryStore({ now: this.now, maxEntries });
   }
 
   // ------------------------------------------------------------ clients
@@ -258,15 +267,8 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
       };
       if (!email || !password || email.length > MAX_EMAIL_LENGTH) return failed();
 
-      // Reserve the attempt before asking the store, so parallel guesses cannot all pass a check-then-increment race.
-      // Success clears the address counter; the per-email counter (any address) is left to expire.
-      const key = `${req.ip ?? "?"}|${email.toLowerCase()}`;
-      const emailKey = `*|${email.toLowerCase()}`;
-      const [byAddress, byEmail] = [
-        await this.store.increment("failure", key, FAILURE_WINDOW_MS),
-        await this.store.increment("failure", emailKey, FAILURE_WINDOW_MS),
-      ];
-      if (byAddress > MAX_FAILURES || byEmail > MAX_EMAIL_FAILURES) {
+      const attempt = await reserveSignIn(this.store, req.ip, email);
+      if (!attempt.allowed) {
         this.renderLogin(res, requestId, p, "Too many failed attempts. Wait 15 minutes and try again.", 429);
         return;
       }
@@ -276,7 +278,7 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
       } catch {
         return failed();
       }
-      await this.store.delete("failure", key);
+      await attempt.succeeded();
       // Single use: of two concurrent sign-ins on one request, only the first gets a code.
       if (!(await this.store.take<Pending>("pending", requestId))) {
         void this.signOutWithRetry("(unissued)", user);
@@ -377,7 +379,7 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
   }
 
   /** Sign the user out at the store, retrying a few times. A final failure is logged (never the token); the store's own expiry is the backstop. */
-  private async signOutWithRetry(grantId: string, user: SignedInUser): Promise<void> {
+  async signOutWithRetry(grantId: string, user: SignedInUser): Promise<void> {
     const delays = this.opts.revokeRetryMs ?? [1_000, 5_000];
     for (let attempt = 0; ; attempt++) {
       try {

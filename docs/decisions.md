@@ -24,6 +24,11 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 | 18 | [Minimise customer data, and make deletion a command](#18-minimise-customer-data-and-make-deletion-a-command) | Governance, privacy |
 | 19 | [Shared sign-in state in Redis, encrypted, for more than one instance](#19-shared-sign-in-state-in-redis-encrypted-for-more-than-one-instance) | Scaling, security |
 | 20 | [A stateless HTTP mode for load balancers and serverless](#20-a-stateless-http-mode-for-load-balancers-and-serverless) | Delivery, scaling |
+| 21 | [A Vercel function entry that refuses in-memory state](#21-a-vercel-function-entry-that-refuses-in-memory-state) | Delivery |
+| 22 | [RFQ review as an MCP tool, with intake inside the server](#22-rfq-review-as-an-mcp-tool-with-intake-inside-the-server) | Solution design, safety |
+| 23 | [Submitting and closing quotes are opt-in writes](#23-submitting-and-closing-quotes-are-opt-in-writes) | Human oversight |
+| 24 | [A review page for reps, beside the MCP endpoint](#24-a-review-page-for-reps-beside-the-mcp-endpoint) | Delivery, security |
+| 25 | [RFQs from an IMAP inbox, reviewed but never drafted](#25-rfqs-from-an-imap-inbox-reviewed-but-never-drafted) | Intake, safety |
 
 ---
 
@@ -213,3 +218,50 @@ Each instance still closes its own MCP sessions: on its one-minute sweep it chec
 **Rejected.** Vercel's zero-config Express detection (it picked up `src/index.ts`, which listens instead of exporting). Allowing the in-memory store on Vercel for demos (it fails intermittently, which is harder to diagnose than a clear refusal). Returning the configuration error to the caller (it names the deployment's settings; the log is the right place).
 
 **Consequences.** One deployment needs a Redis (for example Upstash) even for the mock store. Vercel's per-deployment URLs are refused by the DNS-rebinding check unless `COMMERCE_PUBLIC_URL` names them, so clients use the production domain. Decision 20's consequences apply: no server-to-client stream, and the one-minute sweep may not run.
+
+### 22. RFQ review as an MCP tool, with intake inside the server
+
+**Context.** The quote assistant only ran as a CLI, so a buyer working in Claude Desktop or another MCP client had to leave the chat, save the RFQ as a file and run `rfq-quote review`. Exposing the review as a tool raises one question: who reads the RFQ? The calling agent could extract the lines itself and pass them in, but that agent has tools, and the RFQ is untrusted text from outside the company. Decision 13 exists so that the model reading an RFQ cannot act on it.
+
+**Decision.** `review_rfq` takes the RFQ as text or a base64 PDF and runs the existing pipeline inside the server: the intake step (rule-based by default, Claude when `COMMERCE_RFQ_EXTRACTOR=claude`) has no tools, then matching, stock and price go through the server's own tools over an in-memory MCP connection, acting as the same caller, with the same allowlist and audit log. The result is the review in a trimmed form: each line's text, match, alternatives, stock, price, flags and status; customer-written fields grouped under `customer_content` with a notice that they are data; and a `draft_input` built by `draftInput` from the ready lines only. It saves nothing. The audit log records the RFQ's size, never its text. One review returns at most 80 lines, so the result stays inside the context budget (decision 6). Each user may start 30 reviews an hour, counted together with the review page, and the tool says it reaches outside the store (`openWorldHint`) when Claude intake is on, since each call is then a paid API call.
+
+**Rejected.** Letting the calling agent extract the lines (a hostile RFQ would reach a model with tools). Saving the review on the server and returning an id (stdio has no shared store, and the agent already holds the result). Defaulting the server to Claude intake (every tool call would be a paid API call the operator did not choose).
+
+**Consequences.** The calling agent still sees whatever the person pastes into the chat: the tool cannot prevent that, so the server instructions and the result both say that RFQ text is data and that `suspicious_instructions` are never acted on. The rule-based default cannot read PDFs and does not report injected instructions; an operator who wants either sets the Claude extractor and accepts about $0.08 per RFQ. The draft still needs `draft_negotiable_quote`'s preview and a person's approval (decision 2).
+
+### 23. Submitting and closing quotes are opt-in writes
+
+**Context.** Decision 2 limited every write to a draft: a person submitted the quote in the storefront. That kept the agent away from anything the seller sees, but it also ended the assistant's help at the draft. A buyer still had to leave the chat to send the quote, read the seller's counter-offer, reply to it or decline it.
+
+**Decision.** Two read tools, `list_negotiable_quotes` and `get_negotiable_quote`, show the buyer's quotes, their negotiated prices and the comment history. Comments are labelled third-party text, like product descriptions (decision 3). Two writes, `submit_negotiable_quote` (send a draft to the seller, or reply to an updated quote) and `close_negotiable_quote`, follow the propose-then-approve pattern. Their confirmation token is bound to the action's input and to the quote's state at preview time (status, update time, lines and prices). If the seller changes the quote before the buyer confirms, the approval no longer matches and a new preview is needed. Each token works once. Both writes are registered only when `COMMERCE_TOOLS_ENABLED` names them. Accepting an offer stays in the storefront, because it means checking out and placing an order.
+
+**Rejected.** Turning the writes on by default (an existing setup would gain the power to send things to the seller just by upgrading). A token bound to the input alone (a buyer could approve one price and confirm against another). Accepting through `placeNegotiableQuoteOrder` (placing orders and taking payment stay out of scope).
+
+**Consequences.** Decision 2 now reads: drafts by default; submit and close only when the operator turns them on, and every call is approved by a person. The quote GraphQL calls follow the B2B storefront schema, but they have not been checked against a live store, and the storefront API has no status filter for quotes, so the list is not filtered by status.
+
+### 24. A review page for reps, beside the MCP endpoint
+
+**Context.** Reviewing an RFQ meant a terminal: `rfq-quote review`, then editing a JSON run file or passing `correct` flags, then `draft` with a y/N prompt. Inside sales reps work in a browser, and the MCP tool (decision 22) needs an AI client. Both left out the person the review sheet is for.
+
+**Decision.** The HTTP server can serve a review page at `/rfq` (`COMMERCE_RFQ_WEB=on`, off by default). A rep signs in with their store account through the same identity check and the same lockout counters as the OAuth sign-in page (decision 11). The session is a random cookie value whose hash keys a record in the state store, so it works on one instance, on several with Redis, and in stateless mode. The record holds the user's store token and expires with it. The rep pastes or attaches an RFQ, sees the review sheet, picks one of the offered parts (or leaves a line out) and sets quantities. Changed lines are re-priced from the store and marked as the rep's decision. Then the rep previews the draft and saves it. Every store call goes through the server's own tools as that user, so scoping, the allowlist, the audit log and the propose-then-approve token apply unchanged. Reviews are kept per user in the state store and expire after `COMMERCE_RFQ_RETENTION_DAYS`. Every POST needs the session's CSRF token and passes a same-origin check. The sign-in form carries a single-use nonce. Every customer or store string is cleaned and HTML-escaped, and the CSP allows only the page's own script and stylesheet. A user may start 30 reviews an hour.
+
+**Rejected.** Reusing the OAuth bearer tokens in the browser (they would have to live in script-readable storage). A separate front-end app (a second deployment and an API surface for one page). Letting a rep type any SKU (a typo could put the wrong part in a quote; the rep chooses among the parts the matcher offered, and a part it never found is a "leave out" and a manual quote). A multipart upload parser (another dependency; the page reads the file into a form field instead).
+
+**Consequences.** The server gains a second sign-in surface, so it is off by default and shares the lockout. A rep's choice settles a line's matching flags, but a line is ready only with a store price. The eval's safety number covers the pipeline before any rep edit, and the rep owns each edit. Saved reviews hold customer data on the server for the retention period (see `docs/data-handling.md`). Without JavaScript, a rep can still paste text but cannot attach a file.
+
+### 25. RFQs from an IMAP inbox, reviewed but never drafted
+
+**Context.** Most RFQs arrive by email. With the review page (decision 24), a rep still had to copy each one in. The obvious step is to read a shared RFQ mailbox. But mail is the least trusted input there is: anyone can send it, it can be large, and its attachments can be anything.
+
+**Decision.** `rfq-inbox` is a separate process. It reads unread mail over IMAP with TLS only, using an app password kept in `.env`. Each poll, it:
+- skips any message it has seen before (by Message-ID);
+- sets aside mail from senders outside `COMMERCE_INBOX_ALLOWED_SENDERS` (addresses or domains; required unless `COMMERCE_INBOX_ALLOW_ANY_SENDER=on`), and, with `COMMERCE_INBOX_AUTHSERV_ID`, mail whose topmost `Authentication-Results` header (the one your own server wrote) does not show DMARC pass for the From domain;
+- reads up to 5 attachments of the types the assistant reads (text, CSV, email, and PDF only with Claude intake), each 20 MB at most, or else the body;
+- runs the review as the one company user it is configured for, through the server's own tools;
+- saves the result to that user's queue in the shared Redis store, where the review page shows it.
+
+It never drafts or sends anything. A person does that on the page, with the usual preview and approval. Processed mail is moved to `COMMERCE_INBOX_DONE_FOLDER`, or marked read. When the store or the intake model is down (a 429, a 5xx or a lost connection), the message is left unread for the next poll, at most 3 times, and parts already reviewed are not reviewed again. A document the model cannot read is set aside at once. A daily budget (`COMMERCE_INBOX_MAX_DOCS_PER_DAY`) caps documents reviewed, which bounds paid intake. A lease in the store keeps two pollers off one mailbox. Logs carry counts and reasons, never message text, addresses or connection details. IMAP is generic, so it works with Microsoft 365, Gmail, Zoho or any host.
+
+**Rejected.** Running the poller inside the HTTP server. Over HTTP, the config forbids a fixed store identity, so that no client can share one (decision 11). The poller needs exactly one, so it gets its own process and settings. Drafting automatically from mail (a hostile or mistaken email would reach the store without a person). Provider-specific APIs such as Microsoft Graph or the Gmail API (more setup and tied to one vendor; IMAP covers them all). Storing the original email (the review keeps what the rep needs; decision 18).
+
+**Consequences.** The web page and the poller must share Redis (`COMMERCE_STATE_STORE=redis`). Without `COMMERCE_INBOX_AUTHSERV_ID`, the allowlist trusts the From header, which anyone can forge, so startup warns; the daily budget still caps the damage. With Claude intake, every email is a paid call, so startup says so. Two new dependencies, `imapflow` and `mailparser`, both MIT, are pinned to exact versions.

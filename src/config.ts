@@ -13,9 +13,33 @@ export const ALL_TOOLS = [
   "get_order_status",
   "read_requisition_list",
   "draft_negotiable_quote",
+  "review_rfq",
+  "list_negotiable_quotes",
+  "get_negotiable_quote",
+  "submit_negotiable_quote",
+  "close_negotiable_quote",
 ] as const;
 
 export type ToolName = (typeof ALL_TOOLS)[number];
+
+/**
+ * Writes that go past a draft (ADR 23). They are registered only when COMMERCE_TOOLS_ENABLED names them,
+ * so an existing setup never gains them by upgrading.
+ */
+export const OPT_IN_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>(["submit_negotiable_quote", "close_negotiable_quote"]);
+
+export const RFQ_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export interface RfqConfig {
+  /** Who reads the RFQ inside the server. "heuristic" is free; "claude" is a paid API call per RFQ. */
+  extractor: "heuristic" | "claude";
+  model?: string;
+  effort?: (typeof RFQ_EFFORTS)[number];
+  /** How long saved reviews are kept (web page and inbox). */
+  retentionDays: number;
+  /** JSONL file for rep corrections from the web page. Unset: corrections are not recorded. */
+  correctionsLog?: string;
+}
 
 export interface HttpConfig {
   host: string;
@@ -40,6 +64,8 @@ export interface HttpConfig {
    * Set it behind a proxy, or every user shares one rate-limit and sign-in lockout bucket.
    */
   trustProxy: number;
+  /** The RFQ review page at /rfq (ADR 24). Off unless COMMERCE_RFQ_WEB=on. */
+  rfqWeb: boolean;
 }
 
 export type StateConfig =
@@ -74,6 +100,7 @@ export interface Config {
   paas?: Omit<PaasOptions, "fetch" | "auth"> & { auth?: PaasOptions["auth"] };
   /** Present when transport is "http". */
   http?: HttpConfig;
+  rfq: RfqConfig;
 }
 
 const ATTRIBUTE_KEYS: AttributeKey[] = ["part_type", "head", "thread", "length_mm", "material", "grade", "finish", "pack_size"];
@@ -172,7 +199,7 @@ function resolveTools(enabled?: string[], disabled?: string[]): Set<ToolName> {
   }
   if (enabled) return new Set(enabled as ToolName[]);
   const off = new Set(disabled ?? []);
-  return new Set(ALL_TOOLS.filter((t) => !off.has(t)));
+  return new Set(ALL_TOOLS.filter((t) => !off.has(t) && !OPT_IN_TOOLS.has(t)));
 }
 
 function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfig {
@@ -205,10 +232,17 @@ function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfi
     state: loadState(env),
     sessions: loadSessions(env.COMMERCE_HTTP_SESSIONS),
     trustProxy: loadTrustProxy(env.COMMERCE_TRUST_PROXY),
+    rfqWeb: loadOnOff("COMMERCE_RFQ_WEB", env.COMMERCE_RFQ_WEB),
     tokenTtlSeconds: Math.min(ttl, 3600),
     redirectHosts: parseList(env.COMMERCE_OAUTH_REDIRECT_HOSTS) ?? [],
     mockPassword,
   };
+}
+
+function loadOnOff(name: string, raw: string | undefined): boolean {
+  if (raw === undefined || raw === "" || raw === "off") return false;
+  if (raw === "on") return true;
+  throw new Error(`${name} must be "on" or "off", got "${raw}"`);
 }
 
 function loadTrustProxy(raw: string | undefined): number {
@@ -226,7 +260,81 @@ function loadSessions(raw: string | undefined): HttpConfig["sessions"] {
   return v;
 }
 
-function loadState(env: NodeJS.ProcessEnv): StateConfig {
+/** The mailbox the inbox poller reads RFQs from (ADR 25). Only TLS connections. */
+export interface InboxConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  folder: string;
+  /** Processed mail is moved here; unset: it is only marked as read. */
+  doneFolder?: string;
+  pollSeconds: number;
+  /** Lower-cased addresses ("buyer@x.example") and domains ("x.example"). Empty only with allowAnySender. */
+  allowedSenders: string[];
+  /** COMMERCE_INBOX_ALLOW_ANY_SENDER=on: review mail from anyone. Off by default: an allowlist is required. */
+  allowAnySender: boolean;
+  /**
+   * The authserv-id your own mail server writes in Authentication-Results (e.g. "mx.supplier.example"). When set, a
+   * message is reviewed only if the topmost Authentication-Results header is that server's and says dmarc=pass for
+   * the From domain, so a forged From address is refused.
+   */
+  authservId?: string;
+  /** Documents reviewed per day, across all mail. Bounds store load and paid intake. */
+  maxDocsPerDay: number;
+}
+
+export function loadInbox(env: NodeJS.ProcessEnv): InboxConfig {
+  const host = env.COMMERCE_INBOX_HOST;
+  if (!host) throw new Error("COMMERCE_INBOX_HOST is required, e.g. imap.example.com");
+  if (!/^[A-Za-z0-9.-]{1,253}$/.test(host)) throw new Error("COMMERCE_INBOX_HOST must be a host name.");
+  const user = env.COMMERCE_INBOX_USER;
+  const password = env.COMMERCE_INBOX_PASSWORD;
+  if (!user || !password) throw new Error("COMMERCE_INBOX_USER and COMMERCE_INBOX_PASSWORD (an app password) are required. Keep them in .env.");
+  const allowed = (parseList(env.COMMERCE_INBOX_ALLOWED_SENDERS) ?? []).map((s) => s.toLowerCase().replace(/^@/, ""));
+  for (const a of allowed) if (!/^([^@\s]+@)?[a-z0-9.-]+\.[a-z]{2,}$/.test(a)) throw new Error(`COMMERCE_INBOX_ALLOWED_SENDERS has an entry that is not an address or domain: "${a}"`);
+  const allowAnySender = loadOnOff("COMMERCE_INBOX_ALLOW_ANY_SENDER", env.COMMERCE_INBOX_ALLOW_ANY_SENDER);
+  if (!allowed.length && !allowAnySender) {
+    throw new Error("Set COMMERCE_INBOX_ALLOWED_SENDERS to the addresses or domains whose RFQs to review (or COMMERCE_INBOX_ALLOW_ANY_SENDER=on to review mail from anyone).");
+  }
+  const authservId = env.COMMERCE_INBOX_AUTHSERV_ID?.trim().toLowerCase();
+  if (authservId !== undefined && authservId !== "" && !/^[a-z0-9.-]{1,253}$/.test(authservId)) throw new Error("COMMERCE_INBOX_AUTHSERV_ID must be a host name.");
+  return {
+    host,
+    port: intSetting("COMMERCE_INBOX_PORT", env.COMMERCE_INBOX_PORT, 993, 1, 65535),
+    user,
+    password,
+    folder: env.COMMERCE_INBOX_FOLDER || "INBOX",
+    ...(env.COMMERCE_INBOX_DONE_FOLDER ? { doneFolder: env.COMMERCE_INBOX_DONE_FOLDER } : {}),
+    pollSeconds: intSetting("COMMERCE_INBOX_POLL_SECONDS", env.COMMERCE_INBOX_POLL_SECONDS, 120, 30, 86_400),
+    allowedSenders: allowed,
+    allowAnySender,
+    ...(authservId ? { authservId } : {}),
+    maxDocsPerDay: intSetting("COMMERCE_INBOX_MAX_DOCS_PER_DAY", env.COMMERCE_INBOX_MAX_DOCS_PER_DAY, 200, 1, 100_000),
+  };
+}
+
+export function loadRfqConfig(env: NodeJS.ProcessEnv): RfqConfig {
+  const extractor = env.COMMERCE_RFQ_EXTRACTOR ?? "heuristic";
+  if (extractor !== "heuristic" && extractor !== "claude") {
+    throw new Error(`COMMERCE_RFQ_EXTRACTOR must be "heuristic" or "claude", got "${extractor}"`);
+  }
+  const effort = env.COMMERCE_RFQ_EFFORT;
+  if (effort && !(RFQ_EFFORTS as readonly string[]).includes(effort)) {
+    throw new Error(`COMMERCE_RFQ_EFFORT must be one of ${RFQ_EFFORTS.join(", ")}, got "${effort}"`);
+  }
+  const model = env.COMMERCE_RFQ_MODEL;
+  if (model !== undefined && !/^[a-z0-9][a-z0-9.\-]{2,80}$/.test(model)) throw new Error("COMMERCE_RFQ_MODEL must be a model id such as claude-opus-5-5.");
+  return {
+    extractor,
+    ...(model ? { model } : {}),
+    ...(effort ? { effort: effort as NonNullable<RfqConfig["effort"]> } : {}),
+    retentionDays: intSetting("COMMERCE_RFQ_RETENTION_DAYS", env.COMMERCE_RFQ_RETENTION_DAYS, 14, 1, 365),
+    ...(env.COMMERCE_CORRECTIONS_LOG ? { correctionsLog: env.COMMERCE_CORRECTIONS_LOG } : {}),
+  };
+}
+
+export function loadState(env: NodeJS.ProcessEnv): StateConfig {
   const kind = env.COMMERCE_STATE_STORE ?? "memory";
   if (kind === "memory") {
     if (env.COMMERCE_REDIS_URL) throw new Error('COMMERCE_REDIS_URL is set but COMMERCE_STATE_STORE is not "redis". Set COMMERCE_STATE_STORE=redis to use it.');
@@ -297,6 +405,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxPageSize: 20,
     ...(backend === "paas" ? { paas: loadPaas(env, callerEmail, perSession) } : {}),
     ...(perSession ? { http: loadHttp(env, backend) } : {}),
+    rfq: loadRfqConfig(env),
   };
 }
 

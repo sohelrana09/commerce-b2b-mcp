@@ -15,8 +15,10 @@ import type {
   PartAttributes,
   ProductDetail,
   ProductSummary,
+  QuoteDetail,
   QuoteDraft,
   QuoteDraftInput,
+  QuoteSummary,
   RequisitionList,
   RequisitionListSummary,
   SearchQuery,
@@ -679,4 +681,96 @@ export class PaasBackend implements CommerceBackend {
       ...(warnings.length ? { warnings } : {}),
     };
   }
+
+  // ---------------------------------------------------------------- quote negotiation
+
+  private toSummary(q: GqlQuoteSummary): QuoteSummary {
+    const sub = q.prices?.subtotal_excluding_tax ?? null;
+    return {
+      quote_id: q.uid,
+      name: q.name ?? "",
+      status: (q.status ?? "unknown").toLowerCase(),
+      created_at: q.created_at ?? null,
+      updated_at: q.updated_at ?? null,
+      currency: sub?.currency ?? "",
+      subtotal: sub?.value === null || sub?.value === undefined ? null : round2(sub.value),
+      line_count: q.items?.length ?? 0,
+    };
+  }
+
+  async listQuotes(caller: Caller, opts: { page: number; pageSize: number }): Promise<Page<QuoteSummary>> {
+    await this.ensureCaller(caller);
+    const data = await this.gql<{ negotiableQuotes: { total_count: number | null; items: GqlQuoteSummary[] | null } | null }>(Q.negotiableQuotes, {
+      pageSize: opts.pageSize,
+      currentPage: opts.page,
+    });
+    const items = (data.negotiableQuotes?.items ?? []).slice(0, opts.pageSize).map((q) => this.toSummary(q));
+    const total = data.negotiableQuotes?.total_count ?? items.length;
+    return { items, page: opts.page, page_size: opts.pageSize, total, has_more: (opts.page - 1) * opts.pageSize + items.length < total };
+  }
+
+  async getQuote(caller: Caller, quoteId: string): Promise<QuoteDetail> {
+    await this.ensureCaller(caller);
+    type Detail = Omit<GqlQuoteSummary, "items"> & {
+      items: Array<{ uid: string; quantity: number; product: { sku: string; name: string | null }; prices: { price: Money; row_total: Money } | null }> | null;
+      comments: Array<{ created_at: string | null; creator_type: string | null; author: { firstname: string | null; lastname: string | null } | null; text: string | null }> | null;
+    };
+    const data = await this.gql<{ negotiableQuote: Detail | null }>(Q.negotiableQuote, { uid: quoteId });
+    const q = data.negotiableQuote;
+    if (!q) throw new ToolError("NOT_FOUND", `Quote ${quoteId} was not found.`);
+    return {
+      ...this.toSummary(q),
+      lines: (q.items ?? []).map((i) => ({
+        sku: i.product.sku,
+        name: i.product.name ?? i.product.sku,
+        qty: i.quantity,
+        unit_price: i.prices?.price.value ?? 0,
+        row_total: round2(i.prices?.row_total.value ?? 0),
+      })),
+      comments: (q.comments ?? []).map((c) => ({
+        at: c.created_at,
+        author: (c.creator_type ?? "").toUpperCase() === "SELLER" ? ("seller" as const) : ("buyer" as const),
+        author_name: [c.author?.firstname, c.author?.lastname].filter(Boolean).join(" ") || null,
+        text: c.text ?? "",
+      })),
+      review_url: this.opts.quoteReviewUrl ?? null,
+    };
+  }
+
+  async submitQuote(caller: Caller, quoteId: string, comment: string | undefined): Promise<QuoteSummary> {
+    await this.ensureCaller(caller);
+    const data = await this.gql<{ sendNegotiableQuoteForReview: { quote: GqlQuoteSummary | null } | null }>(Q.submitNegotiableQuote, {
+      input: { quote_uid: quoteId, ...(comment ? { comment: { comment } } : {}) },
+    });
+    const q = data.sendNegotiableQuoteForReview?.quote;
+    if (!q) throw new ToolError("INTERNAL", "The store did not return the quote after sending it.");
+    return this.toSummary(q);
+  }
+
+  async closeQuote(caller: Caller, quoteId: string): Promise<QuoteSummary> {
+    await this.ensureCaller(caller);
+    const data = await this.gql<{
+      closeNegotiableQuotes: {
+        result_status: string | null;
+        operation_results: Array<{ __typename: string; errors?: Array<{ message?: string | null }> | null }> | null;
+      } | null;
+    }>(Q.closeNegotiableQuotes, { input: { quote_uids: [quoteId] } });
+    const r = data.closeNegotiableQuotes;
+    if (r?.result_status !== "SUCCESS") {
+      const why = r?.operation_results?.flatMap((o) => o.errors ?? []).map((e) => e.message ?? "").filter(Boolean)[0];
+      throw new ToolError("INVALID_INPUT", `The store did not close quote ${quoteId}${why ? `: ${why.slice(0, 200)}` : "."}`);
+    }
+    const { lines: _l, comments: _c, review_url: _r, ...summary } = await this.getQuote(caller, quoteId);
+    return summary;
+  }
+}
+
+interface GqlQuoteSummary {
+  uid: string;
+  name: string | null;
+  status: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  items: Array<{ uid: string }> | null;
+  prices: { subtotal_excluding_tax: Money | null } | null;
 }

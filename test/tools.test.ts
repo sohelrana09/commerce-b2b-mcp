@@ -11,10 +11,13 @@ describe("tool listing and allowlist", () => {
         "draft_negotiable_quote",
         "get_company_context",
         "get_customer_price",
+        "get_negotiable_quote",
         "get_order_status",
         "get_product",
+        "list_negotiable_quotes",
         "list_orders",
         "read_requisition_list",
+        "review_rfq",
         "search_parts",
       ].sort(),
     );

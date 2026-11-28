@@ -19,6 +19,8 @@ An RFQ is a business email or file, but it usually carries **personal data**: th
 | 7 | HTTP mode sign-in state: OAuth clients, hashed access tokens, the company user's Magento token, sign-in failure counters (IP address and email) | Server memory by default; with `COMMERCE_STATE_STORE=redis`, Redis, every value encrypted (AES-256-GCM) and every key hashed | Merchant (operator) | Tokens at most 1 hour, plus 24 hours so the user can be signed out at the store; codes 1 minute; sign-in requests 10 minutes; failure counters 15 minutes; client registrations 30 days. Memory: all lost on restart | Revoke the token; or restart (memory); or delete the keys under `COMMERCE_REDIS_PREFIX`, or change `COMMERCE_STATE_KEY` (Redis) |
 | 8 | Diagnostics: store error messages, failed tool calls | stderr | Merchant (operator) | Operator's log retention | Log rotation |
 | 9 | Golden eval set and published results | This repository | Project | Permanent | Synthetic data only, so nothing to delete |
+| 10 | Saved reviews from the web page (ADR 24): the same fields as a run file, plus the rep's choices, owned by one company user | The server's state store: memory, or Redis with every value encrypted | Merchant (operator) | `COMMERCE_RFQ_RETENTION_DAYS` (default 14) after the last change | Delete it on the page; `rfq-quote forget-reviews --owner <email> [--older-than <days>]` (Redis); or wait for expiry |
+| 11 | Inbox mail (ADR 25): the email and its attachments, read to make a saved review (row 10); a hash of each Message-ID so it is not reviewed twice | The mailbox (the email stays there or in the done folder); the hash in the state store | Merchant | The mailbox's own rules; the hash for the retention period | Delete the email in the mailbox; the hash expires |
 
 Not stored anywhere: passwords (the sign-in page passes them to the store's `generateCustomerToken` and keeps nothing), the Magento customer token outside server memory or the encrypted Redis store, and the original RFQ inside the run file (only the extracted fields are kept).
 
@@ -62,12 +64,13 @@ The corrections log is designed to grow the golden eval set, which means real cu
 
 ## Requests from individuals
 
-- **Access:** search run files, the corrections log and the audit log for the person's name or email. With `shape` mode, the audit log holds the signed-in rep's email but not the buyer's details.
-- **Erasure:** delete the RFQ and its run files, run `rfq-quote forget --document <rfq file name>`, and delete or anonymise the draft in Magento. Data sent to Anthropic expires on its own (30 days on standard terms) or was never stored (ZDR).
+- **Access:** search run files, saved reviews on the web page, the corrections log and the audit log for the person's name or email. With `shape` mode, the audit log holds the signed-in rep's email but not the buyer's details.
+- **Erasure:** delete the RFQ and its run files, delete the saved review on the web page (or run `rfq-quote forget-reviews` for the user who holds it), run `rfq-quote forget --document <rfq file name>`, and delete or anonymise the draft in Magento. Data sent to Anthropic expires on its own (30 days on standard terms) or was never stored (ZDR).
 
 ## Gaps
 
-- No automatic expiry for run files: they are deleted manually or by a scheduled job.
+- No automatic expiry for run files: they are deleted manually or by a scheduled job. (Saved web reviews do expire.)
+- Saved web reviews are found per company user: there is no search across every user's queue for one customer's name, so an erasure request needs the user who received the RFQ, or the retention period as the backstop.
 - The audit log has no built-in rotation; it relies on the platform.
 - With `full` mode, search phrases in the audit log can contain customer text.
 - The open question above about the fallback model.

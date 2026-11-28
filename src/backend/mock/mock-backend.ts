@@ -12,13 +12,23 @@ import type {
   Page,
   ProductDetail,
   ProductSummary,
+  QuoteComment,
+  QuoteDetail,
   QuoteDraft,
   QuoteDraftInput,
+  QuoteSummary,
   RequisitionList,
   RequisitionListSummary,
   SearchQuery,
 } from "../types.js";
 import * as F from "./fixtures.js";
+
+interface MockQuote extends QuoteDraft {
+  company_id: string;
+  created_by: string;
+  updated_at: string;
+  comments: QuoteComment[];
+}
 
 interface Resolved {
   user: F.FixtureUser;
@@ -37,7 +47,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  */
 export class MockBackend implements CommerceBackend {
   readonly name = "mock";
-  private quotes: Array<QuoteDraft & { company_id: string }> = [];
+  private quotes: MockQuote[] = [];
   private quoteSeq = 5001;
 
   constructor(private readonly now: () => Date = () => new Date()) {}
@@ -249,8 +259,10 @@ export class MockBackend implements CommerceBackend {
       const price = prices[i]!;
       return { sku: p.sku, name: p.name, qty: l.qty, unit_price: price.unit_price, row_total: price.line_total, note: l.note ?? null };
     });
-    const quote: QuoteDraft & { company_id: string } = {
+    const at = this.now().toISOString();
+    const quote: MockQuote = {
       company_id: r.company.id,
+      created_by: r.user.email,
       quote_id: `Q-${this.quoteSeq++}`,
       name: input.name,
       status: "draft",
@@ -258,10 +270,98 @@ export class MockBackend implements CommerceBackend {
       currency: CURRENCY,
       lines,
       subtotal: round2(lines.reduce((s, l) => s + l.row_total, 0)),
-      created_at: this.now().toISOString(),
+      created_at: at,
+      updated_at: at,
+      comments: input.comment ? [{ at, author: "buyer", author_name: r.user.name, text: input.comment }] : [],
     };
     this.quotes.push(quote);
-    const { company_id: _c, ...out } = quote;
+    return this.asDraft(quote);
+  }
+
+  private asDraft(q: MockQuote): QuoteDraft {
+    const { company_id: _c, created_by: _b, updated_at: _u, comments: _m, ...out } = q;
     return out;
+  }
+
+  private quoteSummary(q: MockQuote): QuoteSummary {
+    return {
+      quote_id: q.quote_id,
+      name: q.name,
+      status: q.status,
+      created_at: q.created_at,
+      updated_at: q.updated_at,
+      currency: q.currency,
+      subtotal: q.subtotal,
+      line_count: q.lines.length,
+    };
+  }
+
+  /** Quotes this caller may see: their own, or every quote in the company for the company admin. Others do not exist. */
+  private quotesFor(r: Resolved): MockQuote[] {
+    this.require(r, "quotes.create");
+    return this.quotes.filter((q) => q.company_id === r.company.id && (q.created_by === r.user.email || r.user.role === "company_admin"));
+  }
+
+  private quoteFor(r: Resolved, id: string): MockQuote {
+    const q = this.quotesFor(r).find((x) => x.quote_id === id);
+    if (!q) throw new ToolError("NOT_FOUND", `Quote ${id} was not found.`);
+    return q;
+  }
+
+  async listQuotes(caller: Caller, opts: { page: number; pageSize: number }): Promise<Page<QuoteSummary>> {
+    const all = [...this.quotesFor(this.resolve(caller))].reverse();
+    const start = (opts.page - 1) * opts.pageSize;
+    const items = all.slice(start, start + opts.pageSize).map((q) => this.quoteSummary(q));
+    return { items, page: opts.page, page_size: opts.pageSize, total: all.length, has_more: start + items.length < all.length };
+  }
+
+  async getQuote(caller: Caller, quoteId: string): Promise<QuoteDetail> {
+    const q = this.quoteFor(this.resolve(caller), quoteId);
+    return {
+      ...this.quoteSummary(q),
+      lines: q.lines.map(({ sku, name, qty, unit_price, row_total }) => ({ sku, name, qty, unit_price, row_total })),
+      comments: q.comments.map((c) => ({ ...c })),
+      review_url: q.review_url,
+    };
+  }
+
+  async submitQuote(caller: Caller, quoteId: string, comment: string | undefined): Promise<QuoteSummary> {
+    const r = this.resolve(caller);
+    const q = this.quoteFor(r, quoteId);
+    if (!["draft", "updated", "open"].includes(q.status)) {
+      throw new ToolError("INVALID_INPUT", `Quote ${quoteId} is ${q.status} and cannot be sent to the seller now.`);
+    }
+    q.status = "submitted";
+    q.updated_at = this.now().toISOString();
+    if (comment) q.comments.push({ at: q.updated_at, author: "buyer", author_name: r.user.name, text: comment });
+    return this.quoteSummary(q);
+  }
+
+  async closeQuote(caller: Caller, quoteId: string): Promise<QuoteSummary> {
+    const q = this.quoteFor(this.resolve(caller), quoteId);
+    if (q.status === "closed" || q.status === "ordered") throw new ToolError("INVALID_INPUT", `Quote ${quoteId} is already ${q.status}.`);
+    q.status = "closed";
+    q.updated_at = this.now().toISOString();
+    return this.quoteSummary(q);
+  }
+
+  /**
+   * Demo and test helper, not part of the backend interface: the seller answers a submitted quote with a comment and,
+   * optionally, new unit prices. The quote becomes "updated", as in the storefront.
+   */
+  sellerRespond(quoteId: string, opts: { comment: string; unitPrices?: Record<string, number> }): void {
+    const q = this.quotes.find((x) => x.quote_id === quoteId);
+    if (!q) throw new Error(`No quote ${quoteId}`);
+    for (const l of q.lines) {
+      const p = opts.unitPrices?.[l.sku];
+      if (p !== undefined) {
+        l.unit_price = p;
+        l.row_total = round2(p * l.qty);
+      }
+    }
+    q.subtotal = round2(q.lines.reduce((s, l) => s + l.row_total, 0));
+    q.status = "updated";
+    q.updated_at = this.now().toISOString();
+    q.comments.push({ at: q.updated_at, author: "seller", author_name: "Sales team", text: opts.comment });
   }
 }

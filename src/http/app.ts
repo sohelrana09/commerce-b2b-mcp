@@ -15,6 +15,7 @@ import { createServer } from "../server.js";
 import { mockIdentity, paasIdentity } from "./identity.js";
 import { CommerceOAuthProvider, SCOPE, type IdentityProvider, type SignedInUser } from "./oauth.js";
 import { RedisStore, type StateStore } from "./state.js";
+import { rfqWebRouter, type WebOptions } from "./web.js";
 
 interface Session {
   transport: StreamableHTTPServerTransport;
@@ -33,6 +34,8 @@ export interface HttpAppOptions {
   now?: () => number;
   /** Delays between retries of a failed sign-out at the store (ms). Tests shorten it. */
   revokeRetryMs?: number[];
+  /** Tests only: the RFQ web page's intake step. */
+  rfqExtractor?: WebOptions["extractor"];
 }
 
 const IDLE_MS = 30 * 60_000;
@@ -93,6 +96,9 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     claim: async (token, ttlMs) => (await provider.store.increment("confirm-used", token, ttlMs)) === 1,
   };
 
+  // Shared rate counters (the RFQ review budget), across instances in Redis mode.
+  const counter = (ns: string, key: string, windowMs: number) => provider.store.increment(ns, key, windowMs);
+
   const backendFor = (user: SignedInUser): CommerceBackend => {
     if (shared) return shared;
     if (!config.paas || !user.customerToken) throw new Error("No customer token for this session.");
@@ -124,6 +130,22 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     }),
   );
   app.use(provider.loginRouter());
+  if (http.rfqWeb) {
+    app.use(
+      "/rfq",
+      rfqWebRouter({
+        config,
+        store: provider.store,
+        identity,
+        audit,
+        ledger,
+        backendFor,
+        signOut: (user) => provider.signOutWithRetry("(web)", user),
+        now,
+        ...(opts.rfqExtractor ? { extractor: opts.rfqExtractor } : {}),
+      }),
+    );
+  }
 
   const bearer = requireBearerAuth({
     verifier: provider,
@@ -155,7 +177,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     }
     entry.lastUsed = now();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    const { server } = createServer({ ...config, callerEmail: email }, { backend: entry.backend, audit, ledger });
+    const { server } = createServer({ ...config, callerEmail: email }, { backend: entry.backend, audit, ledger, counter });
     res.on("close", () => {
       void transport.close().catch(() => undefined);
       void server.close().catch(() => undefined);
@@ -204,7 +226,7 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     transport.onclose = () => {
       if (transport.sessionId) sessions.delete(transport.sessionId);
     };
-    const { server } = createServer({ ...config, callerEmail: user.email }, { backend: backendFor(user), audit, ledger });
+    const { server } = createServer({ ...config, callerEmail: user.email }, { backend: backendFor(user), audit, ledger, counter });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   });

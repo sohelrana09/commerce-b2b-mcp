@@ -22,8 +22,8 @@ It covers the B2B layer that generic Magento MCP servers leave out: company acco
 **Key features**
 
 - **Caller-scoped, never admin:** every call acts as one signed-in company user, so Magento applies that company's shared catalog, prices and role permissions. There is no admin token, by design.
-- **Nine B2B tools:** company context and credit, attribute-aware part search, product detail, MSI availability, company price, orders, order status, requisition lists, and draft negotiable quotes.
-- **Propose, then approve:** the one write tool returns a priced preview and a signed confirmation token. It saves only a draft quote, and never submits it.
+- **Fourteen B2B tools:** company context and credit, attribute-aware part search, product detail, MSI availability, company price, orders, order status, requisition lists, draft negotiable quotes, RFQ review, and quote negotiation (list, read, and opt-in submit and close).
+- **Propose, then approve:** every write returns a preview and a signed, single-use confirmation token. By default the only write saves a draft quote; submitting to the seller and closing a quote are opt-in.
 - **RFQ quote assistant:** turns a customer's emailed or CSV request for quote into a priced review sheet, flags every line a person must check, then drafts the quote. A 151-line golden set guards it, and its safety number ("wrong lines marked ready") is held at 0.
 - **Local or hosted:** stdio for one user on their own machine, or Streamable HTTP with OAuth where each access token is one company user, on one instance or several sharing an encrypted Redis store. Every call is audited and traced.
 - **Verified on a real store:** Adobe Commerce 2.4.8-p5 with B2B 1.5.2-p3, on a copy of a production fastener catalogue (~17,000 products).
@@ -100,8 +100,14 @@ The animation is recorded from the real demo with [VHS](https://github.com/charm
 | `get_order_status` | read | Lines, shipped qty and tracking for one of this company's orders |
 | `read_requisition_list` | read | The user's saved reorder lists, or one list's items |
 | `draft_negotiable_quote` | write | Preview, then save a **draft** quote after human approval. Never submits it |
+| `review_rfq` | read | Review a pasted RFQ (text, email, CSV or PDF): match, stock, price and flags per line, plus draft input for the ready lines. Intake runs inside the server with no tools |
 
-Placing orders, payments, customer edits and deletes are deliberately out of scope for v1.
+| `list_negotiable_quotes` | read | The buyer's quotes, most recently changed first, with status (`updated` means the seller has answered) |
+| `get_negotiable_quote` | read | One quote's lines, negotiated prices and buyer/seller comment history (comments labelled as data) |
+| `submit_negotiable_quote` | write, opt-in | Preview, then send a draft to the seller, or reply to a counter-offer, after human approval |
+| `close_negotiable_quote` | write, opt-in | Preview, then close a quote the buyer no longer wants, after human approval |
+
+The two opt-in writes are registered only when `COMMERCE_TOOLS_ENABLED` names them (ADR 23). Their approval is bound to the quote as it stood at preview time, so a seller change in between needs a new preview. Accepting an offer means checking out, which a person does in the storefront. Placing orders, payments, customer edits and deletes are deliberately out of scope.
 
 ### Things to ask
 
@@ -162,6 +168,15 @@ node dist/assistant/cli.js correct evals/golden/rfq-01-email.txt.run.json --line
 With no settings, it runs against the mock store as a buyer at *Harbour Marine Engineering*. That company's catalogue is a generated range of about 330 metric fasteners (`src/backend/mock/reference-catalog.ts`).
 
 `--extractor claude` (the default) uses Claude to read the RFQ. It needs `ANTHROPIC_API_KEY` or an `ant auth login` profile.
+
+### From an MCP client
+
+The same review is available in chat as the `review_rfq` tool. Paste the RFQ (or attach it as a base64 PDF) and the server reads it with its own intake step, which has no tools (at most 30 reviews an hour per user, shared with the review page), then returns each line with its flags and a `draft_input` for `draft_negotiable_quote`. Nothing is saved until a person approves the draft preview.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `COMMERCE_RFQ_EXTRACTOR` | `heuristic` | `heuristic` (free, text and CSV only) or `claude` (reads PDFs and reports injected instructions; about $0.08 per RFQ, needs `ANTHROPIC_API_KEY`) |
+| `COMMERCE_RFQ_MODEL`, `COMMERCE_RFQ_EFFORT` | `claude-opus-5-5`, `medium` | Claude intake model and effort |
 
 ### How the assistant works
 
@@ -348,6 +363,41 @@ Some B2B versions have no requisition-list ACL resource. On those, only company 
 - **Not exposed to the storefront API:** shared catalog name, the "allow exceeding credit limit" setting, PO numbers on orders, and shipment dates. These come back as `null` rather than guessed values.
 - **Lead times:** MSI has no lead-time field. Set `COMMERCE_SOURCE_LEAD_TIMES` per source, or messages leave them out.
 - **Pack size and unit of measure** default to `1` and `each` until mapped.
+- **Quote negotiation:** the list, detail, submit and close calls follow the B2B storefront GraphQL schema but have not yet been checked against a live store. The storefront API cannot filter quotes by status.
+
+## RFQ review page
+
+With the HTTP transport and `COMMERCE_RFQ_WEB=on`, the server also serves a review page for reps at `/rfq`:
+
+1. Sign in with your company account (the same check and lockout as the OAuth sign-in).
+2. Paste an RFQ or attach a `.txt`, `.eml`, `.csv` (or `.pdf` with Claude intake). RFQs from the inbox (below) appear in the same queue.
+3. On the review sheet, pick one of the offered parts for each flagged line, or leave it out, and fix quantities. Changed lines are re-priced from the store.
+4. Preview the draft quote, then save it. With the opt-in quote tools enabled, open the quote to send it to the seller, read their answer, reply or close it.
+
+Saved reviews are kept per user in the state store for `COMMERCE_RFQ_RETENTION_DAYS` (default 14) after their last change. Set `COMMERCE_CORRECTIONS_LOG` to record each rep decision for the eval set (`docs/data-handling.md`). See ADR 24 for the session and CSRF design.
+
+### RFQs by email
+
+`rfq-inbox` reads a shared RFQ mailbox over IMAP (TLS) and puts each RFQ in one company user's queue on the review page. It never drafts or sends; a rep does that on the page. It needs the HTTP server's Redis settings plus one company user's store settings (as for stdio) and:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `COMMERCE_INBOX_HOST`, `COMMERCE_INBOX_PORT` | `993` | IMAP server (TLS only) |
+| `COMMERCE_INBOX_USER`, `COMMERCE_INBOX_PASSWORD` | | Mailbox login; use an app password and keep it in `.env` |
+| `COMMERCE_INBOX_FOLDER`, `COMMERCE_INBOX_DONE_FOLDER` | `INBOX`, unset | Where to read, and where to move processed mail (unset: mark it read) |
+| `COMMERCE_INBOX_ALLOWED_SENDERS` | required | Comma-separated addresses or domains whose mail is reviewed |
+| `COMMERCE_INBOX_ALLOW_ANY_SENDER` | `off` | `on` reviews mail from anyone instead (not recommended) |
+| `COMMERCE_INBOX_AUTHSERV_ID` | unset (warns) | Your mail server's id in `Authentication-Results`. When set, mail is reviewed only if that server saw DMARC pass for the From domain, so a forged From is refused |
+| `COMMERCE_INBOX_MAX_DOCS_PER_DAY` | `200` | Documents reviewed per day; the rest wait for the next day |
+| `COMMERCE_INBOX_POLL_SECONDS` | `120` | Time between polls |
+
+A message that fails with a temporary error is retried on the next poll, up to 3 times, then set aside. Parts already reviewed are not reviewed again.
+
+```bash
+rfq-inbox --once
+```
+
+With `COMMERCE_RFQ_EXTRACTOR=claude`, every email is a paid intake call (about $0.08). See ADR 25.
 
 ## Remote transport (Streamable HTTP + OAuth)
 
