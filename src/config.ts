@@ -64,6 +64,8 @@ export interface HttpConfig {
    * Set it behind a proxy, or every user shares one rate-limit and sign-in lockout bucket.
    */
   trustProxy: number;
+  /** The RFQ review page at /rfq (ADR 24). Off unless COMMERCE_RFQ_WEB=on. */
+  rfqWeb: boolean;
 }
 
 export type StateConfig =
@@ -230,10 +232,17 @@ function loadHttp(env: NodeJS.ProcessEnv, backend: Config["backend"]): HttpConfi
     state: loadState(env),
     sessions: loadSessions(env.COMMERCE_HTTP_SESSIONS),
     trustProxy: loadTrustProxy(env.COMMERCE_TRUST_PROXY),
+    rfqWeb: loadOnOff("COMMERCE_RFQ_WEB", env.COMMERCE_RFQ_WEB),
     tokenTtlSeconds: Math.min(ttl, 3600),
     redirectHosts: parseList(env.COMMERCE_OAUTH_REDIRECT_HOSTS) ?? [],
     mockPassword,
   };
+}
+
+function loadOnOff(name: string, raw: string | undefined): boolean {
+  if (raw === undefined || raw === "" || raw === "off") return false;
+  if (raw === "on") return true;
+  throw new Error(`${name} must be "on" or "off", got "${raw}"`);
 }
 
 function loadTrustProxy(raw: string | undefined): number {
@@ -251,7 +260,7 @@ function loadSessions(raw: string | undefined): HttpConfig["sessions"] {
   return v;
 }
 
-export function loadRfq(env: NodeJS.ProcessEnv): RfqConfig {
+export function loadRfqConfig(env: NodeJS.ProcessEnv): RfqConfig {
   const extractor = env.COMMERCE_RFQ_EXTRACTOR ?? "heuristic";
   if (extractor !== "heuristic" && extractor !== "claude") {
     throw new Error(`COMMERCE_RFQ_EXTRACTOR must be "heuristic" or "claude", got "${extractor}"`);
@@ -342,7 +351,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxPageSize: 20,
     ...(backend === "paas" ? { paas: loadPaas(env, callerEmail, perSession) } : {}),
     ...(perSession ? { http: loadHttp(env, backend) } : {}),
-    rfq: loadRfq(env),
+    rfq: loadRfqConfig(env),
   };
 }
 

@@ -70,6 +70,10 @@ export interface LineReview {
   price: { unit_price: number; line_total: number; currency: string; price_source: string } | null;
   flags: Flag[];
   status: "ready" | "review";
+  /** Set when a rep chose the part and quantity for this line (web page). Their choice settles the review flags. */
+  rep_confirmed?: boolean;
+  /** Set when a rep left the line out of the quote. */
+  rep_excluded?: boolean;
 }
 
 export interface QuoteReview {
@@ -324,7 +328,7 @@ export interface DraftOptions {
 export function draftInput(review: QuoteReview, opts: DraftOptions = {}) {
   const chosen = review.lines.filter((l) => l.match && (l.status === "ready" || opts.includeFlagged));
   // The tool rejects duplicate SKUs: merge lines that matched the same part.
-  const bySku = new Map<string, { sku: string; qty: number; refs: string[]; flagged: boolean }>();
+  const bySku = new Map<string, { sku: string; qty: number; refs: string[]; flagged: boolean; confirmed: boolean }>();
   for (const l of chosen) {
     const ref = l.line.line_ref ?? String(l.index + 1);
     const cur = bySku.get(l.match!.sku);
@@ -332,8 +336,9 @@ export function draftInput(review: QuoteReview, opts: DraftOptions = {}) {
       cur.qty += l.qty_each;
       cur.refs.push(ref);
       cur.flagged ||= l.status === "review";
+      cur.confirmed ||= Boolean(l.rep_confirmed);
     } else {
-      bySku.set(l.match!.sku, { sku: l.match!.sku, qty: l.qty_each, refs: [ref], flagged: l.status === "review" });
+      bySku.set(l.match!.sku, { sku: l.match!.sku, qty: l.qty_each, refs: [ref], flagged: l.status === "review", confirmed: Boolean(l.rep_confirmed) });
     }
   }
   for (const l of bySku.values()) {
@@ -349,9 +354,91 @@ export function draftInput(review: QuoteReview, opts: DraftOptions = {}) {
     lines: [...bySku.values()].map((l) => ({
       sku: l.sku,
       qty: l.qty,
-      note: `${l.flagged ? "REVIEW: " : ""}RFQ line ${l.refs.join(", ")}`.slice(0, 255),
+      note: `${l.flagged ? "REVIEW: " : ""}RFQ line ${l.refs.join(", ")}${l.confirmed ? " (rep confirmed)" : ""}`.slice(0, 255),
     })),
   };
+}
+
+/** A rep's decision for one line: a part from the line's match or alternatives (or null to leave it out), and optionally a quantity. */
+export interface LineEdit {
+  index: number;
+  sku: string | null;
+  qty_each?: number;
+}
+
+/**
+ * Apply a rep's decisions. A chosen part must be one the pipeline offered for that line (the match or an
+ * alternative): the rep settles ambiguity, they do not type SKUs the matcher never saw. Chosen lines get fresh
+ * stock and price from the store. The line is ready only if the store prices it; its earlier flags stay visible
+ * as notes. Returns a new review; the input is not changed.
+ */
+export async function applyEdits(review: QuoteReview, edits: LineEdit[], tools: CommerceTools): Promise<QuoteReview> {
+  const next: QuoteReview = JSON.parse(JSON.stringify(review));
+  const changed: LineReview[] = [];
+  for (const e of edits) {
+    const l = next.lines[e.index];
+    if (!l) throw new Error(`There is no line ${e.index + 1}.`);
+    if (e.qty_each !== undefined && !(Number.isInteger(e.qty_each) && e.qty_each > 0 && e.qty_each <= MAX_LINE_QTY)) {
+      throw new Error(`Line ${l.line.line_ref ?? e.index + 1}: the quantity must be a whole number from 1 to ${MAX_LINE_QTY}.`);
+    }
+    if (e.sku === null) {
+      l.rep_excluded = true;
+      l.rep_confirmed = false;
+      l.status = "review";
+      if (l.match) l.alternatives = [l.match, ...l.alternatives.filter((a) => a.sku !== l.match!.sku)].slice(0, 3);
+      l.match = null;
+      l.stock = null;
+      l.price = null;
+      continue;
+    }
+    const offered = [l.match, ...l.alternatives].filter((c): c is Candidate => Boolean(c));
+    const pick = offered.find((c) => c.sku === e.sku);
+    if (!pick) throw new Error(`Line ${l.line.line_ref ?? e.index + 1}: ${e.sku} was not offered for this line.`);
+    l.alternatives = offered.filter((c) => c.sku !== pick.sku).slice(0, 3);
+    l.match = pick;
+    if (e.qty_each !== undefined) l.qty_each = e.qty_each;
+    l.rep_excluded = false;
+    l.rep_confirmed = true;
+    l.stock = null;
+    l.price = null;
+    l.flags = l.flags.filter((f) => !["out_of_stock", "short_stock", "stock_unconfirmed", "no_price"].includes(f.code));
+    changed.push(l);
+  }
+  for (const batch of chunk(changed, 20)) {
+    const qtyNeeded: Record<string, number> = {};
+    for (const r of batch) qtyNeeded[r.match!.sku] = Math.max(qtyNeeded[r.match!.sku] ?? 0, r.qty_each);
+    const res = await tools.call("check_availability", { skus: Object.keys(qtyNeeded), qty_needed: qtyNeeded });
+    if (res.isError) throw new Error(`check_availability failed: ${res.data?.error?.message ?? "unknown error"}`);
+    const bySku = new Map<string, StockRow>((res.data.items as StockRow[]).map((i) => [i.sku, i]));
+    for (const r of batch) {
+      const a = bySku.get(r.match!.sku);
+      if (!a) continue;
+      r.stock = { salable_qty: a.salable_qty, in_stock: a.in_stock, message: a.message };
+      if (!a.in_stock) r.flags.push({ code: "out_of_stock", message: a.message });
+      else if (a.salable_qty !== null && a.salable_qty < r.qty_each) r.flags.push({ code: "short_stock", message: a.message });
+    }
+  }
+  for (const r of changed) {
+    const one = await tools.call("get_customer_price", { lines: [{ sku: r.match!.sku, qty: r.qty_each }] });
+    if (one.isError) {
+      if (one.data?.error?.retryable) throw new Error(`get_customer_price failed: ${one.data.error.message}`);
+    } else {
+      const p = (one.data.lines as PriceRow[])[0];
+      if (p && p.sku === r.match!.sku) r.price = { unit_price: p.unit_price, line_total: p.line_total, currency: p.currency, price_source: p.price_source };
+    }
+    const priced = Boolean(r.price && r.price.unit_price > 0);
+    if (!priced) r.flags.push({ code: "no_price", message: "The store returned no usable price for this SKU and quantity." });
+    // The rep's choice settles matching and stock questions; a quote line still needs a store price.
+    r.status = priced ? "ready" : "review";
+  }
+  const ready = next.lines.filter((l) => l.status === "ready");
+  next.totals = {
+    ready_lines: ready.length,
+    review_lines: next.lines.length - ready.length,
+    ready_subtotal: Math.round(ready.reduce((s, l) => s + (l.price?.line_total ?? 0), 0) * 100) / 100,
+    currency: next.lines.find((l) => l.price)?.price?.currency ?? next.totals.currency,
+  };
+  return next;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);

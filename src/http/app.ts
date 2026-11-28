@@ -15,6 +15,7 @@ import { createServer } from "../server.js";
 import { mockIdentity, paasIdentity } from "./identity.js";
 import { CommerceOAuthProvider, SCOPE, type IdentityProvider, type SignedInUser } from "./oauth.js";
 import { RedisStore, type StateStore } from "./state.js";
+import { rfqWebRouter, type WebOptions } from "./web.js";
 
 interface Session {
   transport: StreamableHTTPServerTransport;
@@ -33,6 +34,8 @@ export interface HttpAppOptions {
   now?: () => number;
   /** Delays between retries of a failed sign-out at the store (ms). Tests shorten it. */
   revokeRetryMs?: number[];
+  /** Tests only: the RFQ web page's intake step. */
+  rfqExtractor?: WebOptions["extractor"];
 }
 
 const IDLE_MS = 30 * 60_000;
@@ -124,6 +127,22 @@ export function createHttpApp(config: Config, opts: HttpAppOptions = {}) {
     }),
   );
   app.use(provider.loginRouter());
+  if (http.rfqWeb) {
+    app.use(
+      "/rfq",
+      rfqWebRouter({
+        config,
+        store: provider.store,
+        identity,
+        audit,
+        ledger,
+        backendFor,
+        signOut: (user) => provider.signOutWithRetry("(web)", user),
+        now,
+        ...(opts.rfqExtractor ? { extractor: opts.rfqExtractor } : {}),
+      }),
+    );
+  }
 
   const bearer = requireBearerAuth({
     verifier: provider,

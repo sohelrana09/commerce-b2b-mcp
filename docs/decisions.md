@@ -27,6 +27,7 @@ A log of the decisions behind `commerce-b2b-mcp` and the RFQ quote assistant: wh
 | 21 | [A Vercel function entry that refuses in-memory state](#21-a-vercel-function-entry-that-refuses-in-memory-state) | Delivery |
 | 22 | [RFQ review as an MCP tool, with intake inside the server](#22-rfq-review-as-an-mcp-tool-with-intake-inside-the-server) | Solution design, safety |
 | 23 | [Submitting and closing quotes are opt-in writes](#23-submitting-and-closing-quotes-are-opt-in-writes) | Human oversight |
+| 24 | [A review page for reps, beside the MCP endpoint](#24-a-review-page-for-reps-beside-the-mcp-endpoint) | Delivery, security |
 
 ---
 
@@ -236,3 +237,13 @@ Each instance still closes its own MCP sessions: on its one-minute sweep it chec
 **Rejected.** Turning the writes on by default (an existing setup would gain the power to send things to the seller just by upgrading). A token bound to the input alone (a buyer could approve one price and confirm against another). Accepting through `placeNegotiableQuoteOrder` (placing orders and taking payment stay out of scope).
 
 **Consequences.** Decision 2 now reads: drafts by default; submit and close only when the operator turns them on, and every call is approved by a person. The quote GraphQL calls follow the B2B storefront schema, but they have not been checked against a live store, and the storefront API has no status filter for quotes, so the list is not filtered by status.
+
+### 24. A review page for reps, beside the MCP endpoint
+
+**Context.** Reviewing an RFQ meant a terminal: `rfq-quote review`, then editing a JSON run file or passing `correct` flags, then `draft` with a y/N prompt. Inside sales reps work in a browser, and the MCP tool (decision 22) needs an AI client. Both left out the person the review sheet is for.
+
+**Decision.** The HTTP server can serve a review page at `/rfq` (`COMMERCE_RFQ_WEB=on`, off by default). A rep signs in with their store account through the same identity check and the same lockout counters as the OAuth sign-in page (decision 11). The session is a random cookie value whose hash keys a record in the state store, so it works on one instance, on several with Redis, and in stateless mode. The record holds the user's store token and expires with it. The rep pastes or attaches an RFQ, sees the review sheet, picks one of the offered parts (or leaves a line out) and sets quantities. Changed lines are re-priced from the store and marked as the rep's decision. Then the rep previews the draft and saves it. Every store call goes through the server's own tools as that user, so scoping, the allowlist, the audit log and the propose-then-approve token apply unchanged. Reviews are kept per user in the state store and expire after `COMMERCE_RFQ_RETENTION_DAYS`. Every POST needs the session's CSRF token and passes a same-origin check. The sign-in form carries a single-use nonce. Every customer or store string is cleaned and HTML-escaped, and the CSP allows only the page's own script and stylesheet. A user may start 30 reviews an hour.
+
+**Rejected.** Reusing the OAuth bearer tokens in the browser (they would have to live in script-readable storage). A separate front-end app (a second deployment and an API surface for one page). Letting a rep type any SKU (a typo could put the wrong part in a quote; the rep chooses among the parts the matcher offered, and a part it never found is a "leave out" and a manual quote). A multipart upload parser (another dependency; the page reads the file into a form field instead).
+
+**Consequences.** The server gains a second sign-in surface, so it is off by default and shares the lockout. A rep's choice settles a line's matching flags, but a line is ready only with a store price. The eval's safety number covers the pipeline before any rep edit, and the rep owns each edit. Saved reviews hold customer data on the server for the retention period (see `docs/data-handling.md`). Without JavaScript, a rep can still paste text but cannot attach a file.

@@ -24,9 +24,9 @@ Before finishing any change: `npm run typecheck && npm test`. CI runs both on No
 - `src/config.ts`: every `COMMERCE_*` setting is parsed and validated here. Add new settings here, not with ad-hoc `process.env` reads.
 - `src/server.ts`, `src/tools/`: MCP tools. Each tool is declared with `defineTool` in `src/tools/define.ts`, which audits, traces and maps errors for it.
 - `src/backend/`: `mock/` (in-memory store and fixtures) and `paas/` (GraphQL client for a real store, acting as one company user).
-- `src/http/`: Streamable HTTP transport, OAuth provider, sign-in page, session handling.
+- `src/http/`: Streamable HTTP transport, OAuth provider, sign-in page, session handling; `web.ts` is the RFQ review page at `/rfq` (ADR 24), `throttle.ts` the shared sign-in lockout.
 - `src/audit.ts`, `src/trace.ts`: audit log and per-call tracing.
-- `src/assistant/`: the RFQ quote assistant (intake extractors, pipeline, CLI, corrections, eval, pricing).
+- `src/assistant/`: the RFQ quote assistant (intake extractors, pipeline, CLI, corrections, eval, pricing); `summary.ts` runs it inside the server, `reviews.ts` stores saved reviews.
 - `evals/golden/`: synthetic golden set. `evals/results/`: committed Markdown summaries (JSON is ignored).
 - `docs/decisions.md`: architecture decisions (ADRs). `docs/service-targets.md`, `docs/data-handling.md`: what the assistant promises and how it handles data.
 

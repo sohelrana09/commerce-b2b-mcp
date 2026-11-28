@@ -365,6 +365,17 @@ Some B2B versions have no requisition-list ACL resource. On those, only company 
 - **Pack size and unit of measure** default to `1` and `each` until mapped.
 - **Quote negotiation:** the list, detail, submit and close calls follow the B2B storefront GraphQL schema but have not yet been checked against a live store. The storefront API cannot filter quotes by status.
 
+## RFQ review page
+
+With the HTTP transport and `COMMERCE_RFQ_WEB=on`, the server also serves a review page for reps at `/rfq`:
+
+1. Sign in with your company account (the same check and lockout as the OAuth sign-in).
+2. Paste an RFQ or attach a `.txt`, `.eml`, `.csv` (or `.pdf` with Claude intake). RFQs from the inbox (below) appear in the same queue.
+3. On the review sheet, pick one of the offered parts for each flagged line, or leave it out, and fix quantities. Changed lines are re-priced from the store.
+4. Preview the draft quote, then save it. With the opt-in quote tools enabled, open the quote to send it to the seller, read their answer, reply or close it.
+
+Saved reviews are kept per user in the state store for `COMMERCE_RFQ_RETENTION_DAYS` (default 14) after their last change. Set `COMMERCE_CORRECTIONS_LOG` to record each rep decision for the eval set (`docs/data-handling.md`). See ADR 24 for the session and CSRF design.
+
 ## Remote transport (Streamable HTTP + OAuth)
 
 stdio runs the server as one fixed company user on the user's own machine. For a hosted server that many users share, run it over Streamable HTTP. Each user signs in with OAuth, and **each access token is one company user**. So every session is scoped exactly as stdio is (decision 1 still holds).
